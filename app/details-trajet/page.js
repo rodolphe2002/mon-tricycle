@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 const toRad = (x) => (x * Math.PI) / 180;
@@ -15,7 +15,7 @@ const haversineKm = (a, b) => {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 };
 
-export default function DetailsTrajetPage() {
+function DetailsTrajetContent() {
   const router = useRouter();
   const params = useSearchParams();
   const orderId = params.get("id");
@@ -171,5 +171,13 @@ export default function DetailsTrajetPage() {
 
       <div className="h-8" />
     </div>
+  );
+}
+
+export default function DetailsTrajetPage() {
+  return (
+    <Suspense fallback={null}>
+      <DetailsTrajetContent />
+    </Suspense>
   );
 }

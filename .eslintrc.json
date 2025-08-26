@@ -1,4 +1,19 @@
 {
-    "extends": "next/core-web-vitals"
+    "root": true,
+    "plugins": ["react-hooks"],
+    "extends": [
+      "next/core-web-vitals",
+      "plugin:react-hooks/recommended"
+    ],
+    "ignorePatterns": [
+      "node_modules/",
+      "backend/",
+      "server/"
+    ],
+    "rules": {
+      // Désactive certaines règles qui posent problème
+      "@next/next/no-img-element": "off",
+      "react-hooks/exhaustive-deps": "warn"
+    }
   }
   

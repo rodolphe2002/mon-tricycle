@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useToast } from "../components/ToastProvider";
 
@@ -24,7 +24,7 @@ const projectToViewBox = ({ lat, lon }, width, height) => {
   return { x, y };
 };
 
-export default function TrajetEnCoursPage() {
+function TrajetEnCoursContent() {
   const router = useRouter();
   const params = useSearchParams();
   const orderId = params.get('id');
@@ -306,5 +306,13 @@ export default function TrajetEnCoursPage() {
 
       <div className="h-8" />
     </div>
+  );
+}
+
+export default function TrajetEnCoursPage() {
+  return (
+    <Suspense fallback={null}>
+      <TrajetEnCoursContent />
+    </Suspense>
   );
 }

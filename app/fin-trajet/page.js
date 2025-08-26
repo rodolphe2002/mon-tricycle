@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { Suspense, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useToast } from "../components/ToastProvider";
 
@@ -17,7 +17,7 @@ const haversineKm = (a, b) => {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 };
 
-export default function FinDeTrajetPage() {
+function FinDeTrajetContent() {
   const router = useRouter();
   const params = useSearchParams();
   const orderId = params.get("id");
@@ -300,6 +300,14 @@ export default function FinDeTrajetPage() {
 
       {/* Email option removed */}
     </div>
+  );
+}
+
+export default function FinDeTrajetPage() {
+  return (
+    <Suspense fallback={null}>
+      <FinDeTrajetContent />
+    </Suspense>
   );
 }
 

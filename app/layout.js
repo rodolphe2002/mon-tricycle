@@ -5,6 +5,7 @@ import SessionTracker from "./components/SessionTracker.jsx";
 import { ToastProvider } from "./components/ToastProvider.jsx";
 import ActiveOrderGuard from "./components/ActiveOrderGuard.jsx";
 import ActiveDriverGuard from "./components/ActiveDriverGuard.jsx";
+import { Suspense } from "react";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -27,8 +28,12 @@ export default function RootLayout({ children }) {
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
-        <SessionTracker />
-        <ActiveOrderGuard />
+        <Suspense fallback={null}>
+          <SessionTracker />
+        </Suspense>
+        <Suspense fallback={null}>
+          <ActiveOrderGuard />
+        </Suspense>
         <ActiveDriverGuard />
         <ToastProvider>
           {children}
