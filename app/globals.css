@@ -21,8 +21,9 @@
 
 body {
   background: var(--background);
-  color: var(--foreground);
+  color: #0f172a; /* slate-900 for stronger contrast */
   font-family: Arial, Helvetica, sans-serif;
+  font-weight: 500; /* slightly bolder default */
 }
 
 /* Mobile web app improvements */
@@ -127,4 +128,16 @@ input, textarea, select, button {
 /* Links and accents keep existing palette; ensure no text-decoration noise */
 .flat-ui a {
   text-decoration-thickness: 1px;
+}
+
+/* Stronger default headings for readability */
+h1, h2, h3 {
+  color: #0f172a; /* slate-900 */
+  font-weight: 700;
+}
+
+/* Slightly darker placeholders to improve legibility */
+.flat-ui input::placeholder,
+.flat-ui textarea::placeholder {
+  color: #64748b; /* slate-500 */
 }
