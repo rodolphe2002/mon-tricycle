@@ -139,8 +139,14 @@ function TrajetEnCoursContent() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) { try { localStorage.removeItem('tri_token_client'); localStorage.removeItem('tri_user_client'); } catch {} router.replace('/login'); return; }
-      if (!res.ok || !data?.url) { toast.error(data?.error || 'Création du lien impossible'); return; }
-      const url = data.url;
+      if (!res.ok || !data?.token) { toast.error(data?.error || 'Création du lien impossible'); return; }
+      // Build share URL dynamically from current origin
+      let origin = '';
+      try { origin = window.location.origin; } catch {}
+      if (!origin) {
+        origin = (process.env.NEXT_PUBLIC_FRONTEND_ORIGIN || 'http://localhost:3000').replace(/\/$/, '');
+      }
+      const url = `${origin}/suivi/${data.token}`;
       const title = 'Suivez mon trajet Tricycle';
       const text = `Mon ETA: ~${etaMin} min`;
       try {

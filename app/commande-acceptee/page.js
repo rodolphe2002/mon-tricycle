@@ -52,6 +52,9 @@ function CommandeAccepteeContent() {
   const [error, setError] = useState('');
   const [startNotified, setStartNotified] = useState(false);
   const [share, setShare] = useState({ open: false, url: "" });
+  // Show a one-time modal when the driver accepts the order
+  const acceptedShownRef = useRef(false);
+  const [acceptedModal, setAcceptedModal] = useState(false);
 
   // Ensure we have an orderId: fallback from localStorage and update URL if needed
   useEffect(() => {
@@ -91,6 +94,17 @@ function CommandeAccepteeContent() {
         if (stopped) return;
         setOrder(data);
         if (data?.driver) setDriverInfo({ ...data.driver });
+        // Notify on first transition to 'assigned' (driver accepted)
+        if (data?.status === 'assigned' && !acceptedShownRef.current) {
+          const key = orderId ? `tri_accept_notified_${orderId}` : null;
+          let already = false;
+          try { if (key && localStorage.getItem(key) === '1') already = true; } catch {}
+          if (!already) {
+            setAcceptedModal(true);
+            try { if (key) localStorage.setItem(key, '1'); } catch {}
+          }
+          acceptedShownRef.current = true;
+        }
         // On completion: redirect to fin-trajet
         if (data?.status === 'completed') {
           if (intervalId) clearInterval(intervalId);
@@ -391,8 +405,15 @@ function CommandeAccepteeContent() {
       });
       const data = await res.json().catch(() => ({}));
       if (res.status === 401) { try { localStorage.removeItem('tri_token_client'); localStorage.removeItem('tri_user_client'); } catch {} router.replace('/login'); return; }
-      if (!res.ok || !data?.url) { toast.error(data?.error || 'Création du lien impossible'); return; }
-      const url = data.url;
+      if (!res.ok || !data?.token) { toast.error(data?.error || 'Création du lien impossible'); return; }
+      // Build share URL dynamically from current origin to avoid hardcoded localhost
+      let origin = '';
+      try { origin = window.location.origin; } catch {}
+      if (!origin) {
+        // Fallback to env or localhost
+        origin = (process.env.NEXT_PUBLIC_FRONTEND_ORIGIN || 'http://localhost:3000').replace(/\/$/, '');
+      }
+      const url = `${origin}/suivi/${data.token}`;
       const title = 'Suivez mon trajet Tricycle';
       const text = `Je partage mon trajet avec ${driverInfo?.name || 'le conducteur'}`;
       try {
@@ -542,6 +563,33 @@ function CommandeAccepteeContent() {
                 }}
                 className="bg-orange-600 hover:bg-orange-700 text-white rounded-lg px-3 py-2 text-sm"
               >Copier</button>
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Driver accepted modal */}
+      {acceptedModal && (
+        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40">
+          <div className="bg-white rounded-2xl shadow-xl w-[90%] max-w-sm p-4">
+            <div className="flex items-center gap-2 mb-1">
+              <svg className="w-5 h-5 text-orange-600" viewBox="0 0 24 24" fill="currentColor"><path d="M5 12a7 7 0 0 1 14 0v6a2 2 0 0 1-2 2h-3a1 1 0 0 1-1-1v-3H11v3a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2v-6Z"/></svg>
+              <div className="text-base font-semibold text-slate-800">Commande acceptée</div>
+            </div>
+            <p className="text-sm text-slate-600 mt-1">
+              Un conducteur vient d’accepter votre commande et est en route pour venir vous chercher.
+            </p>
+            <div className="mt-4 grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setAcceptedModal(false)}
+                className="bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl py-2 text-sm"
+              >OK</button>
+              <button
+                type="button"
+                onClick={() => router.replace(`/trajet-en-cours?id=${encodeURIComponent(orderId || '')}`)}
+                className="bg-orange-600 hover:bg-orange-700 text-white rounded-xl py-2 text-sm"
+              >Suivre</button>
             </div>
           </div>
         </div>

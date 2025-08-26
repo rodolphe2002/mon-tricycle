@@ -368,7 +368,7 @@ export default function CommanderTrajetPage() {
 
   // Pricing: 200 F par passager + offre bagages
   const baseOk = isHydrated && startPoint && destPoint && startPoint.name !== destPoint.name;
-  const pax = Math.max(1, Math.min(3, Number(options.pax) || 1));
+  const pax = Math.max(1, Math.min(6, Number(options.pax) || 1));
   const bagOffer = Math.max(0, Number(options.bagOffer) || 0);
   const price = baseOk ? 200 * pax + bagOffer : 0;
 
@@ -701,9 +701,26 @@ export default function CommanderTrajetPage() {
               <input
                 type="number"
                 min={1}
-                max={3}
+                max={6}
                 value={options.pax}
-                onChange={(e) => setOptions((o) => ({ ...o, pax: Number(e.target.value) }))}
+                onChange={(e) => {
+                  const raw = Number(e.target.value);
+                  if (Number.isNaN(raw)) {
+                    setOptions((o) => ({ ...o, pax: 1 }));
+                    return;
+                  }
+                  if (raw > 6) {
+                    setOptions((o) => ({ ...o, pax: 6 }));
+                    toast.error("Nos tricycles ne peuvent contenir que 6 personnes.");
+                    return;
+                  }
+                  if (raw < 1) {
+                    setOptions((o) => ({ ...o, pax: 1 }));
+                    toast.error("Désolé, pour passer une commande il faut au moins 1 passager.");
+                    return;
+                  }
+                  setOptions((o) => ({ ...o, pax: raw }));
+                }}
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 outline-none focus:ring-2 focus:ring-orange-400"
               />
             </div>
