@@ -702,13 +702,14 @@ export default function DashboardConducteurPage() {
               {accepted?.status === 'in_progress' && (
                 <button type="button" disabled={acting || acceptedCancelled || accepted?.status === 'cancelled'} className="bg-orange-600 hover:bg-orange-700 disabled:opacity-50 text-white text-sm rounded-lg px-3 py-2" onClick={completeRide}>Terminer la course</button>
               )}
-              {accepted?.status === 'completed' ? (
+              {accepted?.status === 'completed' && (
                 <button
                   type="button"
                   className="bg-white border border-slate-300 text-slate-700 text-sm rounded-lg px-3 py-2"
                   onClick={() => { setAccepted(null); setAcceptedCancelled(false); }}
                 >Fermer</button>
-              ) : (
+              )}
+              {accepted?.status === 'assigned' && (
                 <button type="button" disabled={acting || acceptedCancelled || accepted?.status === 'cancelled'} className={`bg-white border ${acceptedCancelled || accepted?.status === 'cancelled' ? 'border-red-300 text-red-700' : 'border-emerald-300 text-emerald-700'} disabled:opacity-50 text-sm rounded-lg px-3 py-2`} onClick={cancelAsDriver}>Annuler</button>
               )}
             </div>

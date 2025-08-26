@@ -11,6 +11,25 @@ export default function PreCommandePage() {
   const [error, setError] = useState("");
   const base = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
 
+  const timeAgo = (iso) => {
+    if (!iso) return '';
+    const then = new Date(iso).getTime();
+    if (!then) return '';
+    const now = Date.now();
+    const diff = Math.max(0, Math.floor((now - then) / 1000)); // seconds
+    if (diff < 60) return `${diff}s`;
+    const mins = Math.floor(diff / 60);
+    if (mins < 60) return `${mins} min`;
+    const hours = Math.floor(mins / 60);
+    if (hours < 24) return `${hours} h`;
+    const days = Math.floor(hours / 24);
+    if (days < 30) return `${days} j`;
+    const months = Math.floor(days / 30);
+    if (months < 12) return `${months} mois`;
+    const years = Math.floor(months / 12);
+    return `${years} an${years > 1 ? 's' : ''}`;
+  };
+
   const km = (a, b) => {
     if (!a || !b || typeof a.lat !== 'number' || typeof a.lon !== 'number' || typeof b.lat !== 'number' || typeof b.lon !== 'number') return null;
     const R = 6371; // km
@@ -47,6 +66,7 @@ export default function PreCommandePage() {
             title: o.destination?.name || 'Destination récente',
             subtitle: o.start?.name || '',
             eta: typeof mins === 'number' ? `${mins} min` : '',
+            timeAgo: timeAgo(o.completedAt || o.createdAt),
             icon: 'pin',
           };
         });
@@ -136,7 +156,10 @@ export default function PreCommandePage() {
                     <div className="text-[15px] font-medium text-slate-800 truncate">{p.title}</div>
                     <div className="text-xs text-slate-500 truncate">{p.subtitle}</div>
                   </div>
-                  <div className="text-xs text-slate-500">{p.eta}</div>
+                  <div className="text-right">
+                    <div className="text-xs text-slate-600">{p.eta}</div>
+                    {p.timeAgo ? (<div className="text-[11px] text-slate-400">il y a {p.timeAgo}</div>) : null}
+                  </div>
                 </li>
               ))}
             </ul>

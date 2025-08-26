@@ -218,6 +218,24 @@ export default function CommanderTrajetPage() {
   }, [destText]);
 
   const [options, setOptions] = usePersistentState("tri_cmd_options", { promo: "", pax: 1, bags: 0, accessible: false });
+  // Passengers input as free-typed string; validated on blur/Enter
+  const [paxInput, setPaxInput] = useState(String((Number((typeof options?.pax !== 'undefined' ? options.pax : 1)) || 1)));
+  useEffect(() => {
+    // Keep input in sync if pax changes elsewhere
+    const current = String(Number(options.pax) || 1);
+    if (paxInput !== current) setPaxInput(current);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [options.pax]);
+  const validatePax = () => {
+    const n = Number(paxInput);
+    let next = Number.isFinite(n) ? n : 1;
+    let msg = '';
+    if (next < 1) { next = 1; msg = "Désolé, il faut au minimum un passager pour passer une commande."; }
+    if (next > 6) { next = 6; msg = "Désolé, nos tricycles ne peuvent contenir que 6 personnes maximum."; }
+    setOptions((o) => ({ ...o, pax: next }));
+    setPaxInput(String(next));
+    if (msg) toast.error(msg);
+  };
   // Extend options with baggage offer and description
   useEffect(() => {
     // migrate persisted state if missing new fields
@@ -702,25 +720,11 @@ export default function CommanderTrajetPage() {
                 type="number"
                 min={1}
                 max={6}
-                value={options.pax}
-                onChange={(e) => {
-                  const raw = Number(e.target.value);
-                  if (Number.isNaN(raw)) {
-                    setOptions((o) => ({ ...o, pax: 1 }));
-                    return;
-                  }
-                  if (raw > 6) {
-                    setOptions((o) => ({ ...o, pax: 6 }));
-                    toast.error("Nos tricycles ne peuvent contenir que 6 personnes.");
-                    return;
-                  }
-                  if (raw < 1) {
-                    setOptions((o) => ({ ...o, pax: 1 }));
-                    toast.error("Désolé, pour passer une commande il faut au moins 1 passager.");
-                    return;
-                  }
-                  setOptions((o) => ({ ...o, pax: raw }));
-                }}
+                step={1}
+                value={paxInput}
+                onChange={(e) => setPaxInput(e.target.value)}
+                onBlur={validatePax}
+                onKeyDown={(e) => { if (e.key === 'Enter') { e.currentTarget.blur(); validatePax(); } }}
                 className="w-full rounded-xl border border-slate-200 px-3 py-2 outline-none focus:ring-2 focus:ring-orange-400"
               />
             </div>

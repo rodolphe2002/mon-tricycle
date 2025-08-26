@@ -195,6 +195,7 @@ function CommandeAccepteeContent() {
 
   const pickup = order?.start || null;
   const destination = order?.destination || null;
+  const isDriverAssigned = order?.status === 'assigned' || order?.status === 'in_progress';
 
   const speedKmh = 22; // rough
   const target = phase === 'to_pickup' ? pickup : destination;
@@ -203,15 +204,17 @@ function CommandeAccepteeContent() {
   // - If to_pickup and no driverPos, approximate with client -> pickup
   // - If to_dest and no driverPos, approximate with pickup -> destination (trip distance)
   const remainingKm = useMemo(() => {
+    if (!isDriverAssigned) return 0; // do not compute before assignment
     if (driverPos && target) return haversineKm(driverPos, target);
     if (phase === 'to_pickup' && clientPos && pickup) return haversineKm(clientPos, pickup);
     if (phase === 'to_dest' && pickup && destination) return haversineKm(pickup, destination);
     return 0;
-  }, [driverPos, target, phase, clientPos, pickup, destination]);
+  }, [driverPos, target, phase, clientPos, pickup, destination, isDriverAssigned]);
   const etaMin = useMemo(() => {
+    if (!isDriverAssigned) return 0;
     if (!remainingKm || remainingKm <= 0) return 0;
     return Math.max(1, Math.round((remainingKm / speedKmh) * 60));
-  }, [remainingKm]);
+  }, [remainingKm, isDriverAssigned]);
 
   const [showCancel, setShowCancel] = usePersistentState("tri_ca_show_cancel", false);
   const cancelRide = () => setShowCancel(true);
@@ -281,9 +284,13 @@ function CommandeAccepteeContent() {
       return L.marker([pt.lat, pt.lon]).addTo(map).bindTooltip(label);
     };
 
+    // Always show pickup marker (client selected start)
     if (pickup) layersRef.current.pickup = addMarker(pickup, "Départ");
-    if (destination) layersRef.current.dest = addMarker(destination, "Arrivée");
-    if (clientPos) layersRef.current.client = addMarker(clientPos, "Vous");
+    // Only show destination marker when the ride is in progress (after pickup)
+    if (isDriverAssigned && phase === 'to_dest' && destination) {
+      layersRef.current.dest = addMarker(destination, "Arrivée");
+    }
+    // Do not show client marker to avoid confusion; focus on driver vs pickup
 
     // Driver marker: persist and update position smoothly
     if (driverPos && Number.isFinite(Number(driverPos.lat)) && Number.isFinite(Number(driverPos.lon))) {
@@ -301,39 +308,28 @@ function CommandeAccepteeContent() {
       pts.push(newLatLng);
     }
 
-    // draw lines
-    // client path to destination (pickup -> dest)
-    if (pickup && destination) {
-      layersRef.current.routeClientToDest = L.polyline(
-        [[pickup.lat, pickup.lon], [destination.lat, destination.lon]],
-        { color: "#3b82f6", weight: 3, dashArray: "6 6" }
-      ).addTo(map);
-    }
-    // driver to client (driver -> pickup)
-    if (driverPos && pickup) {
-      const dLat = Number(driverPos.lat);
-      const dLon = Number(driverPos.lon);
-      const pLat = Number(pickup.lat);
-      const pLon = Number(pickup.lon);
-      if (Number.isFinite(dLat) && Number.isFinite(dLon) && Number.isFinite(pLat) && Number.isFinite(pLon)) {
-        layersRef.current.routeDriverToClient = L.polyline(
-          [[dLat, dLon], [pLat, pLon]],
-          { color: "#fb923c", weight: 5, opacity: 0.9, lineCap: 'round', lineJoin: 'round' }
+    // draw lines (only after driver is assigned)
+    if (isDriverAssigned) {
+      // client path to destination (pickup -> dest)
+      if (pickup && destination) {
+        layersRef.current.routeClientToDest = L.polyline(
+          [[pickup.lat, pickup.lon], [destination.lat, destination.lon]],
+          { color: "#3b82f6", weight: 3, dashArray: "6 6" }
         ).addTo(map);
-        try { layersRef.current.routeDriverToClient.bringToFront(); } catch {}
       }
-    } else if (!driverPos && pickup && clientPos && phase === 'to_pickup') {
-      // Fallback path: client -> pickup while waiting for live driver position
-      const cLat = Number(clientPos.lat);
-      const cLon = Number(clientPos.lon);
-      const pLat = Number(pickup.lat);
-      const pLon = Number(pickup.lon);
-      if (Number.isFinite(cLat) && Number.isFinite(cLon) && Number.isFinite(pLat) && Number.isFinite(pLon)) {
-        layersRef.current.routeDriverToClient = L.polyline(
-          [[cLat, cLon], [pLat, pLon]],
-          { color: "#fb923c", weight: 4, opacity: 0.7, dashArray: "8 6" }
-        ).addTo(map);
-        try { layersRef.current.routeDriverToClient.bringToFront(); } catch {}
+      // driver to client (driver -> pickup)
+      if (driverPos && pickup) {
+        const dLat = Number(driverPos.lat);
+        const dLon = Number(driverPos.lon);
+        const pLat = Number(pickup.lat);
+        const pLon = Number(pickup.lon);
+        if (Number.isFinite(dLat) && Number.isFinite(dLon) && Number.isFinite(pLat) && Number.isFinite(pLon)) {
+          layersRef.current.routeDriverToClient = L.polyline(
+            [[dLat, dLon], [pLat, pLon]],
+            { color: "#fb923c", weight: 5, opacity: 0.9, lineCap: 'round', lineJoin: 'round' }
+          ).addTo(map);
+          try { layersRef.current.routeDriverToClient.bringToFront(); } catch {}
+        }
       }
     }
 
@@ -345,7 +341,7 @@ function CommandeAccepteeContent() {
     }
 
     setTimeout(() => { try { map.invalidateSize(false); } catch {} }, 0);
-  }, [pickup, destination, clientPos, driverPos, phase]);
+  }, [pickup, destination, clientPos, driverPos, phase, isDriverAssigned]);
 
   const confirmCancel = async () => {
     try {
@@ -469,40 +465,46 @@ function CommandeAccepteeContent() {
             <div ref={mapContainerRef} className="w-full h-64" />
           </div>
           <div className="mt-2 flex items-center justify-between text-sm text-slate-700">
-            <div className="flex items-center gap-2">
-              <svg viewBox="0 0 24 24" className="w-5 h-5 text-slate-500" fill="currentColor"><path d="M12 8a1 1 0 0 1 1 1v3.38l2.24 1.29a1 1 0 1 1-1 1.74l-2.74-1.58A1 1 0 0 1 11 13V9a1 1 0 0 1 1-1Zm0-6a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z"/></svg>
-              <span>{etaMin ? `${etaMin} min` : "—"}</span>
-              <span>•</span>
-              <span>{phase === "to_pickup" ? "Arrivée conducteur" : "Arrivée destination"}</span>
-            </div>
+            {isDriverAssigned ? (
+              <div className="flex items-center gap-2">
+                <svg viewBox="0 0 24 24" className="w-5 h-5 text-slate-500" fill="currentColor"><path d="M12 8a1 1 0 0 1 1 1v3.38l2.24 1.29a1 1 0 1 1-1 1.74l-2.74-1.58A1 1 0 0 1 11 13V9a1 1 0 0 1 1-1Zm0-6a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z"/></svg>
+                <span>{etaMin ? `${etaMin} min` : "—"}</span>
+                <span>•</span>
+                <span>{phase === "to_pickup" ? "Arrivée conducteur" : "Arrivée destination"}</span>
+              </div>
+            ) : (
+              <div className="text-slate-600">À la recherche d’un conducteur</div>
+            )}
             <div className="font-semibold text-slate-900">{tripPrice !== '—' ? `~${tripPrice} CFA` : '—'}</div>
           </div>
         </div>
 
-        {/* Driver card */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
-          <div className="flex items-center gap-3">
-            <img src={`https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(driverInfo?.name || 'driver')}`} alt={driverInfo?.name || ''} className="w-14 h-14 rounded-xl object-cover bg-slate-100" />
-            <div className="flex-1 min-w-0">
-              <div className="font-semibold text-slate-800 truncate">{driverInfo?.name || '—'}</div>
-              <div className="text-xs text-slate-500 truncate">
-                <span>{driverInfo?.phone || '—'}</span>
-                <span className="mx-1">•</span>
-                <span>{driverInfo?.plate ? `Plaque ${driverInfo.plate}` : 'Conducteur'}</span>
-                <span className="mx-1">•</span>
-                <span className="text-amber-600">★ {typeof driverInfo?.rating === 'number' ? driverInfo.rating.toFixed(1) : '—'}</span>
+        {/* Driver card (only once a driver is assigned) */}
+        {isDriverAssigned && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
+            <div className="flex items-center gap-3">
+              <img src={`https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(driverInfo?.name || 'driver')}`} alt={driverInfo?.name || ''} className="w-14 h-14 rounded-xl object-cover bg-slate-100" />
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-slate-800 truncate">{driverInfo?.name || '—'}</div>
+                <div className="text-xs text-slate-500 truncate">
+                  <span>{driverInfo?.phone || '—'}</span>
+                  <span className="mx-1">•</span>
+                  <span>{driverInfo?.plate ? `Plaque ${driverInfo.plate}` : 'Conducteur'}</span>
+                  <span className="mx-1">•</span>
+                  <span className="text-amber-600">★ {typeof driverInfo?.rating === 'number' ? driverInfo.rating.toFixed(1) : '—'}</span>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <a
+                  href={driverInfo?.phone ? `tel:${String(driverInfo.phone).trim()}` : undefined}
+                  className={`text-center bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg px-3 py-1 text-sm ${driverInfo?.phone ? '' : 'pointer-events-none opacity-50'}`}
+                  aria-disabled={!driverInfo?.phone}
+                >Appeler</a>
+                <button type="button" onClick={smsDriver} className="bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg px-3 py-1 text-sm">Message</button>
               </div>
             </div>
-            <div className="flex flex-col gap-2">
-              <a
-                href={driverInfo?.phone ? `tel:${String(driverInfo.phone).trim()}` : undefined}
-                className={`text-center bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg px-3 py-1 text-sm ${driverInfo?.phone ? '' : 'pointer-events-none opacity-50'}`}
-                aria-disabled={!driverInfo?.phone}
-              >Appeler</a>
-              <button type="button" onClick={smsDriver} className="bg-blue-50 hover:bg-blue-100 text-blue-700 rounded-lg px-3 py-1 text-sm">Message</button>
-            </div>
           </div>
-        </div>
+        )}
 
         {/* Order details (passengers, baggage, totals) */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">

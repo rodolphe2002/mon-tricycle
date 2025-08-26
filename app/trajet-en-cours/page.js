@@ -169,7 +169,7 @@ function TrajetEnCoursContent() {
   // Leaflet map
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
-  const layersRef = useRef({ base: null, driver: null, pickup: null, dest: null, routeDriverToDest: null, routeFull: null, trace: null });
+  const layersRef = useRef({ base: null, driver: null, pickup: null, dest: null, routeFull: null, trace: null });
   const LRef = useRef(null);
   const driverPathRef = useRef([]); // accumulated driver latlngs
 
@@ -208,7 +208,7 @@ function TrajetEnCoursContent() {
   useEffect(() => {
     const map = mapRef.current; const L = LRef.current;
     if (!map || !L) return;
-    for (const k of ['pickup','dest','routeDriverToDest','routeFull']) { // keep persistent driver and trace
+    for (const k of ['pickup','dest','routeFull']) { // keep persistent driver and trace
       if (layersRef.current[k]) { try { layersRef.current[k].remove(); } catch {} layersRef.current[k] = null; }
     }
     const pts = [];
@@ -232,15 +232,11 @@ function TrajetEnCoursContent() {
       }
       pts.push(dLatLng);
     }
-    // full route pickup->dest (context)
+    // full route pickup->dest (fixed itinerary selected by client)
     if (pickup && destination) {
       layersRef.current.routeFull = L.polyline([[pickup.lat,pickup.lon],[destination.lat,destination.lon]], { color:'#94a3b8', weight:3, dashArray:'6 6' }).addTo(map);
     }
-    // current path driver->dest
-    if (driverPos && destination) {
-      layersRef.current.routeDriverToDest = L.polyline([[driverPos.lat,driverPos.lon],[destination.lat,destination.lon]], { color:'#fb923c', weight:5, opacity:0.9, lineCap:'round', lineJoin:'round' }).addTo(map);
-      try { layersRef.current.routeDriverToDest.bringToFront(); } catch {}
-    }
+    // Do not draw driver->destination polyline; only the fixed itinerary should be shown
     if (pts.length >= 2) { try { map.fitBounds(L.latLngBounds(pts), { padding:[30,30] }); } catch {} } else if (pts.length === 1) { try { map.setView(pts[0], 15); } catch {} }
     setTimeout(() => { try { map.invalidateSize(false); } catch {} }, 0);
   }, [pickup, destination, driverPos]);
