@@ -24,3 +24,38 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* Mobile web app improvements */
+html {
+  /* Prevent iOS from auto-resizing text leading to unexpected zoom */
+  -webkit-text-size-adjust: 100%;
+}
+
+/* Ensure the page fills the visual viewport and handles the on-screen keyboard better */
+html, body {
+  height: 100%;
+  min-height: 100dvh;
+}
+
+/* Avoid layout jumps when the keyboard appears; allow content to remain scrollable */
+body {
+  overscroll-behavior-y: contain;
+  -webkit-overflow-scrolling: touch;
+  padding-bottom: calc(env(safe-area-inset-bottom, 0px));
+}
+
+/* Prevent iOS Safari from triggering zoom on focus by keeping font-size >= 16px */
+input, select, textarea, button {
+  font-size: 16px;
+}
+
+/* Improve tap behavior on interactive elements */
+input, select, textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Optional: normalize appearance on iOS */
+input, textarea, select, button {
+  -webkit-appearance: none;
+  appearance: none;
+}
