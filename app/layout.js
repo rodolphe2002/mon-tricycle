@@ -36,7 +36,7 @@ export default function RootLayout({ children }) {
         <link rel="apple-touch-icon" href="/globe.svg" />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased flat-ui`}
       >
         <Suspense fallback={null}>
           <SessionTracker />

@@ -59,3 +59,72 @@ input, textarea, select, button {
   -webkit-appearance: none;
   appearance: none;
 }
+
+/* ------------------------------ */
+/* Flat UI mode (global overrides) */
+/* ------------------------------ */
+.flat-ui {
+  /* Prefer neutral surfaces */
+  background-color: #ffffff;
+}
+
+/* Remove all drop-shadows and depth */
+.flat-ui .shadow,
+.flat-ui .shadow-sm,
+.flat-ui .shadow-md,
+.flat-ui .shadow-lg,
+.flat-ui .shadow-xl,
+.flat-ui .shadow-2xl,
+.flat-ui .drop-shadow,
+.flat-ui .drop-shadow-sm,
+.flat-ui .drop-shadow-md,
+.flat-ui .drop-shadow-lg,
+.flat-ui .drop-shadow-xl,
+.flat-ui .ring,
+.flat-ui [class*="ring-"] {
+  box-shadow: none !important;
+  filter: none !important;
+}
+
+/* Remove visible borders on containers and elements */
+.flat-ui .border,
+.flat-ui [class*="border-"] {
+  border-color: transparent !important;
+}
+
+/* Inputs: flat, light gray background, no hard outline */
+.flat-ui input,
+.flat-ui textarea,
+.flat-ui select {
+  background-color: #f3f4f6; /* gray-100 */
+  border: 1px solid transparent;
+  box-shadow: none !important;
+  outline: none;
+}
+.flat-ui input:focus,
+.flat-ui textarea:focus,
+.flat-ui select:focus {
+  outline: none;
+  box-shadow: none !important;
+  border-color: transparent;
+}
+
+/* Buttons: flat, keep accent colors via background utilities */
+.flat-ui button {
+  border: none;
+  box-shadow: none !important;
+}
+
+/* Cards/sections: remove borders and shadows, keep clean surfaces */
+.flat-ui section,
+.flat-ui .card,
+.flat-ui .panel,
+.flat-ui .container-surface {
+  box-shadow: none !important;
+  border-color: transparent !important;
+}
+
+/* Links and accents keep existing palette; ensure no text-decoration noise */
+.flat-ui a {
+  text-decoration-thickness: 1px;
+}
