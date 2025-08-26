@@ -5,10 +5,23 @@
       "next/core-web-vitals",
       "plugin:react-hooks/recommended"
     ],
+    "env": {
+      "browser": true,
+      "es2022": true,
+      "node": true
+    },
+    "parserOptions": {
+      "ecmaVersion": 2022,
+      "sourceType": "module",
+      "ecmaFeatures": { "jsx": true }
+    },
     "ignorePatterns": [
       "node_modules/",
       "backend/",
-      "server/"
+      "server/",
+      ".next/",
+      "**/.next/**",
+      "**/*.d.ts"
     ],
     "rules": {
       // Désactive certaines règles qui posent problème
@@ -16,4 +29,3 @@
       "react-hooks/exhaustive-deps": "warn"
     }
   }
-  
