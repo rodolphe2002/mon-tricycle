@@ -61,6 +61,13 @@ input, textarea, select, button {
   appearance: none;
 }
 
+/* Restore native appearance for checkboxes and radios (was hidden by global reset) */
+input[type="checkbox"],
+input[type="radio"] {
+  -webkit-appearance: auto;
+  appearance: auto;
+}
+
 /* ------------------------------ */
 /* Flat UI mode (global overrides) */
 /* ------------------------------ */
@@ -97,17 +104,33 @@ input, textarea, select, button {
 .flat-ui input,
 .flat-ui textarea,
 .flat-ui select {
-  background-color: #f3f4f6; /* gray-100 */
+  background-color: #f7f7f7;
+  border-color: transparent;
+  border-radius: 12px;
   border: 1px solid transparent;
   box-shadow: none !important;
   outline: none;
+}
+.flat-ui input[type="checkbox"] {
+  -webkit-appearance: auto;
+  appearance: auto;
+  width: 18px;
+  height: 18px;
+  background-color: #ffffff;
+  border: 1px solid #cbd5e1; /* slate-300 */
+  border-radius: 4px;
+  box-shadow: none !important;
+  accent-color: #ea580b; /* orange-600 */
+}
+.flat-ui input[type="checkbox"]:focus {
+  outline: 2px solid #fb923c; /* orange-400 */
+  outline-offset: 2px;
 }
 .flat-ui input:focus,
 .flat-ui textarea:focus,
 .flat-ui select:focus {
   outline: none;
   box-shadow: none !important;
-  border-color: transparent;
 }
 
 /* Buttons: flat, keep accent colors via background utilities */
