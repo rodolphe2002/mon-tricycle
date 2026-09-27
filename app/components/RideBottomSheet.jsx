@@ -84,9 +84,12 @@ export default function RideBottomSheet({
           {children}
         </div>
 
-        {/* Fixed footer */}
+        {/* Fixed footer (raised above the mobile gesture/nav bar) */}
         {footer ? (
-          <div className="shrink-0 border-t border-slate-100 px-4 py-3">
+          <div
+            className="shrink-0 border-t border-slate-100 px-4 pt-3"
+            style={{ paddingBottom: "max(1.5rem, calc(env(safe-area-inset-bottom, 0px) + 0.75rem))" }}
+          >
             {footer}
           </div>
         ) : null}

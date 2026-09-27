@@ -21,6 +21,15 @@ const geistMono = Geist_Mono({
 export const metadata = {
   title: "Tricycle — Réservez un tricycle en 2 clics",
   description: "PWA de réservation de tricycle pour des trajets urbains rapides.",
+  icons: {
+    icon: [
+      { url: "/tricycle.png", type: "image/png", sizes: "512x512" },
+      { url: "/tricycle.png", type: "image/png", sizes: "192x192" },
+      { url: "/tricycle.png", type: "image/png", sizes: "48x48" },
+    ],
+    shortcut: "/tricycle.png",
+    apple: "/tricycle.png",
+  },
 };
 
 export default function RootLayout({ children }) {
@@ -33,7 +42,6 @@ export default function RootLayout({ children }) {
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="apple-mobile-web-app-title" content="Tricycle" />
         <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-        <link rel="apple-touch-icon" href="/globe.svg" />
       </head>
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased flat-ui`}
