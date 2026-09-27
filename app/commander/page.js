@@ -449,10 +449,20 @@ export default function CommanderTrajetPage() {
             onClick={() => setModalOpen(true)}
             className="pointer-events-auto flex-1 min-w-0 bg-white rounded-full shadow-md px-4 py-3 flex items-center gap-2 text-left"
           >
-            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+            <span
+              className="w-[22px] h-[22px] rounded-full shrink-0 flex items-center justify-center"
+              style={{ background: "#fff", border: "3px solid #1f2937" }}
+            >
+              <img src="/depart.png" alt="" className="w-3 h-3" />
+            </span>
             <span className="truncate text-sm font-medium text-slate-800">{startText || "Départ"}</span>
             <svg viewBox="0 0 24 24" className="w-4 h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>
-            <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+            <span
+              className="w-[22px] h-[22px] rounded-full shrink-0 flex items-center justify-center"
+              style={{ background: "#fff", border: "3px solid #1f2937" }}
+            >
+              <img src="/destination.png" alt="" className="w-3 h-3" />
+            </span>
             <span className="truncate text-sm font-medium text-slate-800">{destText || "Destination"}</span>
           </button>
         </div>
@@ -515,36 +525,36 @@ export default function CommanderTrajetPage() {
           <div className="text-sm font-medium text-slate-700">Options</div>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
-              <label className="block text-xs text-slate-500 mb-1">Passagers</label>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Passagers</label>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setOptions((o) => ({ ...o, pax: Math.max(1, (Number(o.pax) || 1) - 1) }))}
                   disabled={pax <= 1}
                   aria-label="Moins de passagers"
-                  className="w-8 h-8 rounded-full border border-slate-200 text-slate-600 disabled:opacity-40 flex items-center justify-center text-lg leading-none"
+                  className="w-10 h-10 rounded-full border-2 border-slate-300 text-slate-700 disabled:opacity-40 flex items-center justify-center text-2xl font-bold leading-none"
                 >−</button>
-                <span className="min-w-6 text-center font-semibold text-slate-800">{pax}</span>
+                <span className="min-w-8 text-center text-xl font-bold text-slate-900">{pax}</span>
                 <button
                   type="button"
                   onClick={() => setOptions((o) => ({ ...o, pax: Math.min(6, (Number(o.pax) || 1) + 1) }))}
                   disabled={pax >= 6}
                   aria-label="Plus de passagers"
-                  className="w-8 h-8 rounded-full border border-slate-200 text-slate-600 disabled:opacity-40 flex items-center justify-center text-lg leading-none"
+                  className="w-10 h-10 rounded-full border-2 border-slate-300 text-slate-700 disabled:opacity-40 flex items-center justify-center text-2xl font-bold leading-none"
                 >+</button>
               </div>
             </div>
             <div>
-              <label className="block text-xs text-slate-500 mb-1">Bagages</label>
+              <label className="block text-sm font-semibold text-slate-700 mb-1.5">Bagages</label>
               <div className="flex items-center gap-2">
                 <button
                   type="button"
                   onClick={() => setOptions((o) => ({ ...o, bags: Math.max(0, (Number(o.bags) || 0) - 1) }))}
                   disabled={!options.bags}
                   aria-label="Moins de bagages"
-                  className="w-8 h-8 rounded-full border border-slate-200 text-slate-600 disabled:opacity-40 flex items-center justify-center text-lg leading-none"
+                  className="w-10 h-10 rounded-full border-2 border-slate-300 text-slate-700 disabled:opacity-40 flex items-center justify-center text-2xl font-bold leading-none"
                 >−</button>
-                <span className="min-w-6 text-center font-semibold text-slate-800">{options.bags || 0}</span>
+                <span className="min-w-8 text-center text-xl font-bold text-slate-900">{options.bags || 0}</span>
                 <button
                   type="button"
                   onClick={() => {
@@ -554,7 +564,7 @@ export default function CommanderTrajetPage() {
                   }}
                   disabled={(Number(options.bags) || 0) >= 3}
                   aria-label="Plus de bagages"
-                  className="w-8 h-8 rounded-full border border-slate-200 text-slate-600 disabled:opacity-40 flex items-center justify-center text-lg leading-none"
+                  className="w-10 h-10 rounded-full border-2 border-slate-300 text-slate-700 disabled:opacity-40 flex items-center justify-center text-2xl font-bold leading-none"
                 >+</button>
               </div>
             </div>
@@ -570,7 +580,7 @@ export default function CommanderTrajetPage() {
             {Number(options.bags) > 0 && showBagDetails && (
               <>
                 <div>
-                  <label className="block text-xs text-slate-500 mb-1">Offre bagages (CFA)</label>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Offre bagages (CFA)</label>
                   <input
                     type="number"
                     min={0}
@@ -581,7 +591,7 @@ export default function CommanderTrajetPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-slate-500 mb-1">Description des bagages</label>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Description des bagages</label>
                   <input
                     type="text"
                     value={options.bagDesc ?? ""}

@@ -7,7 +7,7 @@ import { useToast } from "../components/ToastProvider";
 export default function LoginPage() {
   const router = useRouter();
   const toast = useToast();
-  const [form, setForm] = useState({ identifier: "", password: "" });
+  const [form, setForm] = useState({ phone: "", password: "" });
   const [loading, setLoading] = useState(false);
   const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState("");
@@ -38,7 +38,7 @@ export default function LoginPage() {
       const res = await fetch(`${base}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier: form.identifier.trim(), password: form.password }),
+        body: JSON.stringify({ phone: form.phone.trim(), password: form.password }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data?.error || "Connexion échouée");
@@ -71,18 +71,21 @@ export default function LoginPage() {
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm text-slate-600 mb-1">Email ou téléphone</label>
+            <label className="block text-sm text-slate-600 mb-1">Numéro de téléphone</label>
             <div className="relative">
               <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-                {/* Mail/phone icon */}
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M20 4H4a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2Zm0 2v.01L12 13 4 6.01V6h16ZM4 18V8.236l7.386 5.916a1 1 0 0 0 1.228 0L20 8.236V18H4Z"/></svg>
+                {/* Phone icon */}
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M6.62 10.79a15.05 15.05 0 0 0 6.59 6.59l2.2-2.2a1 1 0 0 1 1.02-.24 11.4 11.4 0 0 0 3.57.57 1 1 0 0 1 1 1V20a1 1 0 0 1-1 1A17 17 0 0 1 3 4a1 1 0 0 1 1-1h3.5a1 1 0 0 1 1 1 11.4 11.4 0 0 0 .57 3.57 1 1 0 0 1-.25 1.02l-2.2 2.2Z"/></svg>
               </span>
               <input
-                name="identifier"
-                value={form.identifier}
+                type="tel"
+                name="phone"
+                inputMode="tel"
+                autoComplete="tel"
+                value={form.phone}
                 onChange={onChange}
                 className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-3 outline-none focus:ring-2 focus:ring-orange-400"
-                placeholder="vous@example.com ou +221 77 123 45 67"
+                placeholder="Ex : 07 12 34 56 78"
                 required
               />
             </div>

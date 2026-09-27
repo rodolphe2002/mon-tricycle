@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 
 export default function DriverLoginPage() {
   const router = useRouter();
-  const [form, setForm] = useState({ identifier: "", password: "" });
+  const [form, setForm] = useState({ phone: "", password: "" });
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [showPwd, setShowPwd] = useState(false);
@@ -34,7 +34,7 @@ export default function DriverLoginPage() {
       const res = await fetch(`${base}/api/auth/login`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ identifier: form.identifier.trim(), password: form.password }),
+        body: JSON.stringify({ phone: form.phone.trim(), password: form.password }),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(data?.error || "Connexion échouée");
@@ -70,14 +70,17 @@ export default function DriverLoginPage() {
 
         <form onSubmit={onSubmit} className="space-y-4">
           <div>
-            <label className="block text-sm text-slate-600 mb-1">Téléphone ou Email</label>
+            <label className="block text-sm text-slate-600 mb-1">Numéro de téléphone</label>
             <div className="relative">
               <input
-                name="identifier"
-                value={form.identifier}
+                type="tel"
+                name="phone"
+                inputMode="tel"
+                autoComplete="tel"
+                value={form.phone}
                 onChange={onChange}
                 className="w-full rounded-xl border border-slate-200 px-3 py-3 outline-none focus:ring-2 focus:ring-orange-400"
-                placeholder="Ex: +225 77 00 00 00 ou vous@example.com"
+                placeholder="Ex : 07 12 34 56 78"
                 required
               />
             </div>
