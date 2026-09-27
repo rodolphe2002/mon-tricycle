@@ -1,8 +1,10 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { fetchRoute } from "../lib/routing";
 import { useToast } from "../components/ToastProvider";
+import RideBottomSheet from "../components/RideBottomSheet";
 
 // Utils
 const toRad = (x) => (x * Math.PI) / 180;
@@ -21,6 +23,7 @@ function FinDeTrajetContent() {
   const router = useRouter();
   const params = useSearchParams();
   const orderId = params.get("id");
+  const toast = useToast();
 
   // Payment can still come from query for now (no payment entity yet)
   const payment = params.get("pay") || "Espèces"; // Espèces / Wallet / Carte
@@ -29,9 +32,19 @@ function FinDeTrajetContent() {
   const [km, setKm] = useState(null);
   const [min, setMin] = useState(null);
   const [price, setPrice] = useState(0);
+  const [trip, setTrip] = useState(null); // { start, destination }
   const [loading, setLoading] = useState(true);
   const [err, setErr] = useState("");
-  const toast = useToast();
+
+  // Leaflet map
+  const mapContainerRef = useRef(null);
+  const mapRef = useRef(null);
+  const layersRef = useRef({ base: null, pickup: null, dest: null, route: null });
+  const LRef = useRef(null);
+  const [mapReady, setMapReady] = useState(false);
+  const [sheetH, setSheetH] = useState(0);
+
+  const onSheetHeight = useCallback((h) => setSheetH(h), []);
 
   // Ensure we have an orderId: fallback from localStorage and update URL if needed
   useEffect(() => {
@@ -60,9 +73,10 @@ function FinDeTrajetContent() {
         }
         if (!res.ok) throw new Error(data?.error || 'Erreur de chargement');
         if (cancelled) return;
-        // Compute distance
         const start = data?.start;
         const dest = data?.destination;
+        if (start?.lat != null && dest?.lat != null) setTrip({ start, destination: dest });
+        // Compute distance
         const dKm = (start && dest) ? haversineKm(start, dest) : 0;
         setKm(dKm);
         // Compute minutes: prefer actual ride duration
@@ -85,11 +99,15 @@ function FinDeTrajetContent() {
         if (!cancelled) setLoading(false);
       }
     };
-    run().then(() => {
-      // no-op
-    });
+    run();
     return () => { cancelled = true; };
   }, [orderId, router]);
+
+  const [rating, setRating] = useState(5);
+  const [tip, setTip] = useState(0);
+  const [notes, setNotes] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [alreadyRated, setAlreadyRated] = useState(false);
 
   // Also fetch existing rating/review to prefill and lock UI if already rated
   useEffect(() => {
@@ -114,13 +132,71 @@ function FinDeTrajetContent() {
     return () => { cancelled = true; };
   }, [orderId]);
 
-  const [rating, setRating] = useState(5);
-  const [tip, setTip] = useState(0);
-  const [notes, setNotes] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const [alreadyRated, setAlreadyRated] = useState(false);
+  // Init map once (same setup as the other VTC screens)
+  useEffect(() => {
+    if (!mapContainerRef.current || mapRef.current) return;
+    let mounted = true;
+    (async () => {
+      const L = (await import('leaflet')).default;
+      if (!mounted) return;
+      LRef.current = L;
+      const map = L.map(mapContainerRef.current, { zoomControl: false }).setView([6.2718, -6.9943], 14);
+      const base = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '&copy; OpenStreetMap contributors',
+        updateWhenIdle: false,
+        updateWhenZooming: true,
+        keepBuffer: 2,
+      }).addTo(map);
+      mapRef.current = map;
+      layersRef.current.base = base;
+      setMapReady(true);
+      setTimeout(() => { try { map.invalidateSize(false); } catch {} }, 0);
+    })();
+    return () => { mounted = false; };
+  }, []);
 
-  // No email modal anymore; receipts are downloaded as PDF directly
+  // Draw the completed trip: endpoint pins + road route, fitted above the sheet
+  useEffect(() => {
+    const map = mapRef.current;
+    const L = LRef.current;
+    if (!map || !L || !trip?.start || !trip?.destination) return;
+    let cancelled = false;
+
+    const pinIcon = (src, alt) =>
+      L.divIcon({
+        className: "",
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
+        popupAnchor: [0, -14],
+        tooltipAnchor: [0, -14],
+        html: `<div style="width:30px;height:30px;border-radius:9999px;background:#fff;border:4px solid #1f2937;box-shadow:0 1px 5px rgba(15,23,42,.35);display:flex;align-items:center;justify-content:center"><img src="${src}" alt="${alt}" style="width:15px;height:15px;display:block" /></div>`,
+      });
+
+    try {
+      layersRef.current.pickup = L.marker([trip.start.lat, trip.start.lon], { icon: pinIcon("/depart.png", "Départ") }).addTo(map).bindTooltip("Départ");
+      layersRef.current.dest = L.marker([trip.destination.lat, trip.destination.lon], { icon: pinIcon("/destination.png", "Arrivée") }).addTo(map).bindTooltip("Arrivée");
+    } catch {}
+
+    (async () => {
+      const r = await fetchRoute(trip.start, trip.destination);
+      if (cancelled || !r) return;
+      try {
+        layersRef.current.route = L.polyline(r.coordinates, {
+          color: "#fb923c",
+          weight: 5,
+          opacity: 0.9,
+          lineCap: "round",
+          lineJoin: "round",
+          dashArray: r.fallback ? "6 6" : null,
+        }).addTo(map);
+        const bottomPad = Math.max(120, Math.round((sheetH || 0) * 0.9));
+        map.fitBounds(L.latLngBounds(r.coordinates), { paddingTopLeft: [24, 90], paddingBottomRight: [24, bottomPad] });
+      } catch {}
+    })();
+
+    return () => { cancelled = true; };
+  }, [trip, mapReady, sheetH]);
 
   // Helper to persist finalization (tip, payment, receipt prefs)
   const finalizeOrder = async (opts = {}) => {
@@ -159,13 +235,11 @@ function FinDeTrajetContent() {
     }
   };
 
-  const sendReceipt = async (type) => {
+  const sendReceipt = async () => {
     try {
-      if (type === 'pdf') {
-        toast.info('Téléchargement du reçu en cours...');
-        await downloadPdfReceipt();
-      }
-    } catch (e) {
+      toast.info('Téléchargement du reçu en cours...');
+      await downloadPdfReceipt();
+    } catch {
       toast.error("Téléchargement du reçu impossible.");
     }
   };
@@ -177,7 +251,7 @@ function FinDeTrajetContent() {
     if (!token) { router.replace('/login'); return; }
     const url = `${base}/api/orders/${orderId}/receipt.pdf`;
     const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
-    if (!res.ok) throw new Error('Réçu indisponible');
+    if (!res.ok) throw new Error('Reçu indisponible');
     const blob = await res.blob();
     const href = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -194,16 +268,11 @@ function FinDeTrajetContent() {
     try { await finalizeOrder(); } catch {}
     router.push("/historique");
   };
-  const handleClose = async () => {
-    try { await submitRatingIfNeeded(); } catch {}
-    try { await finalizeOrder(); } catch {}
-    router.push("/");
-  };
+
   const finish = async () => {
     try {
       if (!orderId) { router.push('/'); return; }
       setSubmitting(true);
-      const base = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:4000";
       const token = localStorage.getItem("tri_token_client");
       if (!token) { router.replace('/login'); return; }
       // Submit rating only if not already rated
@@ -212,7 +281,7 @@ function FinDeTrajetContent() {
       try { await finalizeOrder(); } catch {}
       toast.success("Merci pour votre course !");
       router.push("/");
-    } catch (e) {
+    } catch {
       toast.error("Envoi de la note impossible. Veuillez réessayer.");
     } finally {
       setSubmitting(false);
@@ -220,51 +289,111 @@ function FinDeTrajetContent() {
   };
 
   return (
-    <div className="min-h-screen bg-white">
-      {/* Top bar */}
-      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-amber-100">
-        <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <svg className="w-6 h-6 text-orange-600" viewBox="0 0 24 24" fill="currentColor"><path d="M5 12a7 7 0 0 1 14 0v6a2 2 0 0 1-2 2h-3a1 1 0 0 1-1-1v-3H11v3a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2v-6Z"/></svg>
-            <span className="font-bold text-slate-800">Fin de trajet</span>
+    <div className="relative h-[100dvh] overflow-hidden bg-white">
+      {/* Carte plein écran : contexte du trajet terminé */}
+      <div ref={mapContainerRef} className="absolute inset-0 isolate" />
+
+      {/* Barre flottante : état du trajet */}
+      <div className="absolute top-0 inset-x-0 z-[500] pointer-events-none">
+        <div className="max-w-md mx-auto px-3 pt-3 flex justify-center">
+          <div className="pointer-events-auto bg-white rounded-full shadow-md px-4 py-2.5 flex items-center gap-2">
+            <span className="w-5 h-5 rounded-full bg-emerald-500 flex items-center justify-center">
+              <svg viewBox="0 0 24 24" className="w-3.5 h-3.5" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6L9 17l-5-5" />
+              </svg>
+            </span>
+            <span className="text-sm font-medium text-slate-700">Trajet terminé</span>
           </div>
-          <button type="button" onClick={handleClose} className="text-sm text-orange-700 hover:underline">Accueil</button>
         </div>
       </div>
 
-      <div className="max-w-md mx-auto p-4 space-y-4">
-        {/* Résumé */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-          <div className="text-sm font-semibold text-slate-800 mb-3">Résumé du trajet</div>
-          <div className="grid grid-cols-3 gap-3 text-sm">
-            <SummaryItem label="Distance" value={km != null ? `${km.toFixed(1)} km` : '—'} />
-            <SummaryItem label="Durée" value={min != null ? `${min} min` : '—'} />
-            <SummaryItem label="Paiement" value={payment || '—'} />
+      {/* Bottom sheet : élément principal de l'écran */}
+      <RideBottomSheet
+        initialPct={0.62}
+        onHeightChange={onSheetHeight}
+        footer={(
+          <button
+            type="button"
+            onClick={finish}
+            disabled={submitting}
+            className="w-full bg-orange-600 disabled:opacity-60 hover:bg-orange-700 text-white rounded-xl py-3 font-black tracking-wide text-lg shadow"
+          >
+            {submitting ? "Envoi..." : "Terminer"}
+          </button>
+        )}
+      >
+        {/* État principal */}
+        <div className="pt-1">
+          <div className="flex items-center gap-2">
+            <span className="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center shrink-0">
+              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="none" stroke="#059669" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M20 6L9 17l-5-5" />
+              </svg>
+            </span>
+            <span className="text-base font-bold text-slate-800">Fin de trajet</span>
           </div>
-          <div className="mt-4 flex items-center justify-between">
-            <span className="text-slate-600">Prix</span>
-            <span className="font-semibold">{Number(price) ? Number(price) : 0} CFA</span>
+          <div className="text-xs text-slate-500 truncate mt-1 pl-8">
+            {trip?.start?.name || 'Départ'} → {trip?.destination?.name || 'Destination'}
           </div>
-          <div className="mt-1 flex items-center justify-between">
-            <span className="text-slate-600">Pourboire</span>
-            <TipSelector tip={tip} setTip={setTip} />
+        </div>
+
+        {/* Résumé du trajet */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3">
+          <div className="text-sm font-semibold text-slate-700">Résumé du trajet</div>
+          <div className="divide-y divide-slate-100 text-sm">
+            <div className="flex justify-between items-center py-2">
+              <span className="text-slate-600">Distance</span>
+              <span className="font-medium text-slate-900">{km != null ? `${km.toFixed(1)} km` : '—'}</span>
+            </div>
+            <div className="flex justify-between items-center py-2">
+              <span className="text-slate-600">Durée</span>
+              <span className="font-medium text-slate-900">{min != null ? `${min} min` : '—'}</span>
+            </div>
+            <div className="flex justify-between items-center py-2">
+              <span className="text-slate-600">Paiement</span>
+              <span className="font-medium text-slate-900">{payment || '—'}</span>
+            </div>
           </div>
-          <div className="mt-2 pt-2 border-t border-slate-100 flex items-center justify-between">
-            <span className="text-slate-700 font-medium">Total</span>
-            <span className="text-slate-900 font-bold">{total} CFA</span>
+        </div>
+
+        {/* Prix + pourboire + total */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3">
+          <div className="flex items-center justify-between">
+            <span className="text-sm font-semibold text-slate-700">Prix</span>
+            <span className="text-xl font-black text-slate-900">{loading ? '—' : `${Number(price) || 0} CFA`}</span>
+          </div>
+          <div>
+            <div className="text-xs text-slate-500 mb-2">Pourboire</div>
+            <div className="grid grid-cols-4 gap-2">
+              {[0, 100, 200, 500].map((v) => (
+                <button
+                  key={v}
+                  type="button"
+                  onClick={() => setTip(v)}
+                  className={`rounded-xl py-2 text-sm font-medium transition-colors ${tip === v ? 'bg-orange-600 text-white' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'}`}
+                >
+                  {v === 0 ? 'Aucun' : `+${v}`}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="pt-2 border-t border-slate-100 flex items-center justify-between">
+            <span className="font-semibold text-slate-700">Total</span>
+            <span className="text-2xl font-black text-orange-600">{total} CFA</span>
           </div>
         </div>
 
         {/* Notation conducteur */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-          <div className="text-sm font-semibold text-slate-800 mb-2">Noter le conducteur</div>
+          <div className="text-sm font-semibold text-slate-700 mb-2">Noter le conducteur</div>
           <div className="flex items-center gap-2">
-            {[1,2,3,4,5].map((s) => (
+            {[1, 2, 3, 4, 5].map((s) => (
               <button
                 key={s}
                 type="button"
                 onClick={() => setRating(s)}
-                className={`w-10 h-10 rounded-full flex items-center justify-center ${s <= rating ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400'}`}
+                disabled={alreadyRated}
+                className={`w-10 h-10 rounded-full flex items-center justify-center text-lg transition-colors ${s <= rating ? 'bg-amber-100 text-amber-600' : 'bg-slate-100 text-slate-400'} ${alreadyRated ? 'opacity-60' : ''}`}
                 aria-label={`${s} étoiles`}
               >
                 ★
@@ -274,31 +403,21 @@ function FinDeTrajetContent() {
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
+            disabled={alreadyRated}
             placeholder="Un commentaire pour améliorer l'expérience…"
-            className="mt-3 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-400"
+            className="mt-3 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-orange-400 disabled:bg-slate-50"
             rows={3}
           />
         </div>
 
-        {/* Reçus et historique */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
-          <div className="text-sm font-semibold text-slate-800 mb-2">Reçus & Historique</div>
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <button type="button" onClick={() => sendReceipt('pdf')} className="bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl py-2">Reçu PDF</button>
-            <button type="button" onClick={goHistory} className="bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl py-2">Historique</button>
-          </div>
+        {/* Reçu + historique */}
+        <div className="grid grid-cols-2 gap-2">
+          <button type="button" onClick={sendReceipt} className="bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl py-3 text-sm font-medium">Reçu PDF</button>
+          <button type="button" onClick={goHistory} className="bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl py-3 text-sm font-medium">Historique</button>
         </div>
 
-        {/* Actions */}
-        <div className="grid grid-cols-2 gap-3">
-          <button type="button" onClick={finish} className="bg-orange-600 hover:bg-orange-700 text-white rounded-xl py-3 font-semibold">Terminer</button>
-          <button type="button" onClick={() => router.push('/trajet-en-cours')} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl py-3">Retour</button>
-        </div>
-      </div>
-
-      <div className="h-8" />
-
-      {/* Email option removed */}
+        {err ? <div className="text-sm text-red-600">{err}</div> : null}
+      </RideBottomSheet>
     </div>
   );
 }
@@ -308,39 +427,5 @@ export default function FinDeTrajetPage() {
     <Suspense fallback={null}>
       <FinDeTrajetContent />
     </Suspense>
-  );
-}
-
-function SummaryItem({ label, value }) {
-  return (
-    <div className="bg-slate-50 rounded-xl p-3">
-      <div className="text-xs text-slate-500">{label}</div>
-      <div className="text-slate-800 font-medium">{value}</div>
-    </div>
-  );
-}
-
-function TipSelector({ tip, setTip }) {
-  const presets = [0, 100, 200, 500];
-  return (
-    <div className="flex items-center gap-2">
-      {presets.map((v) => (
-        <button
-          key={v}
-          type="button"
-          onClick={() => setTip(v)}
-          className={`px-2 py-1 rounded-lg text-sm ${tip === v ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-600'}`}
-        >
-          {v === 0 ? 'Aucun' : `+${v}`}
-        </button>
-      ))}
-      <input
-        type="number"
-        min={0}
-        value={tip}
-        onChange={(e) => setTip(Number(e.target.value))}
-        className="w-20 rounded-lg border border-slate-200 px-2 py-1 text-sm outline-none focus:ring-2 focus:ring-orange-400"
-      />
-    </div>
   );
 }

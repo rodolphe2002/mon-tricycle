@@ -3,7 +3,9 @@
 import { Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { usePersistentState } from "../lib/persist";
+import { fetchRoute } from "../lib/routing";
 import { useToast } from "../components/ToastProvider";
+import RideBottomSheet from "../components/RideBottomSheet";
 
 // Simple utilities
 const toRad = (x) => (x * Math.PI) / 180;
@@ -16,14 +18,6 @@ const haversineKm = (a, b) => {
   const lat2 = toRad(b.lat);
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
-};
-
-const VIEWPORT = { minLat: 5.28, maxLat: 5.38, minLon: -4.10, maxLon: -3.95 };
-const projectToViewBox = ({ lat, lon }, width, height) => {
-  const pad = 12;
-  const x = ((lon - VIEWPORT.minLon) / (VIEWPORT.maxLon - VIEWPORT.minLon)) * (width - 2 * pad) + pad;
-  const y = (1 - (lat - VIEWPORT.minLat) / (VIEWPORT.maxLat - VIEWPORT.minLat)) * (height - 2 * pad) + pad;
-  return { x, y };
 };
 
 function CommandeAccepteeContent() {
@@ -196,6 +190,8 @@ function CommandeAccepteeContent() {
   const pickup = order?.start || null;
   const destination = order?.destination || null;
   const isDriverAssigned = order?.status === 'assigned' || order?.status === 'in_progress';
+  // {distanceKm, durationMin} driver->pickup via road (OSRM)
+  const [routeEta, setRouteEta] = useState(null);
 
   const speedKmh = 22; // rough
   const target = phase === 'to_pickup' ? pickup : destination;
@@ -212,12 +208,12 @@ function CommandeAccepteeContent() {
   }, [driverPos, target, phase, clientPos, pickup, destination, isDriverAssigned]);
   const etaMin = useMemo(() => {
     if (!isDriverAssigned) return 0;
+    if (phase === 'to_pickup' && routeEta?.durationMin) return routeEta.durationMin;
     if (!remainingKm || remainingKm <= 0) return 0;
     return Math.max(1, Math.round((remainingKm / speedKmh) * 60));
-  }, [remainingKm, isDriverAssigned]);
+  }, [remainingKm, isDriverAssigned, phase, routeEta]);
 
   const [showCancel, setShowCancel] = usePersistentState("tri_ca_show_cancel", false);
-  const cancelRide = () => setShowCancel(true);
 
   // Leaflet map refs
   const mapContainerRef = useRef(null);
@@ -225,6 +221,10 @@ function CommandeAccepteeContent() {
   const layersRef = useRef({ base: null, driver: null, client: null, pickup: null, dest: null, routeDriverToClient: null, routeClientToDest: null });
   const LRef = useRef(null);
   const IconRef = useRef(null);
+  // Bumps when the Leaflet map finishes initializing so dependent effects re-run
+  const [mapReady, setMapReady] = useState(false);
+  // Last routed driver->pickup leg to avoid re-requesting OSRM on every position poll
+  const driverRouteRef = useRef({ from: null, coords: null });
 
   // Initialize Leaflet map once
   useEffect(() => {
@@ -248,7 +248,7 @@ function CommandeAccepteeContent() {
       // Choose an initial center
       const cLat = (pickup?.lat ?? clientPos?.lat ?? 5.345);
       const cLon = (pickup?.lon ?? clientPos?.lon ?? -4.02);
-      const map = L.map(mapContainerRef.current).setView([cLat, cLon], 14);
+      const map = L.map(mapContainerRef.current, { zoomControl: false }).setView([cLat, cLon], 14);
       const base = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
         attribution: "&copy; OpenStreetMap contributors",
@@ -260,10 +260,10 @@ function CommandeAccepteeContent() {
 
       mapRef.current = map;
       layersRef.current.base = base;
+      setMapReady(true);
       setTimeout(() => { try { map.invalidateSize(false); } catch {} }, 0);
     })();
     return () => { mounted = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Update markers and bounds when positions change
@@ -308,14 +308,19 @@ function CommandeAccepteeContent() {
       pts.push(newLatLng);
     }
 
-    // draw lines (only after driver is assigned)
+    // draw lines (only after driver is assigned) — real road routes via OSRM
     if (isDriverAssigned) {
       // client path to destination (pickup -> dest)
       if (pickup && destination) {
-        layersRef.current.routeClientToDest = L.polyline(
+        const line = L.polyline(
           [[pickup.lat, pickup.lon], [destination.lat, destination.lon]],
           { color: "#3b82f6", weight: 3, dashArray: "6 6" }
         ).addTo(map);
+        layersRef.current.routeClientToDest = line;
+        fetchRoute(pickup, destination).then((r) => {
+          if (!r || layersRef.current.routeClientToDest !== line) return;
+          try { line.setLatLngs(r.coordinates); } catch {}
+        });
       }
       // driver to client (driver -> pickup)
       if (driverPos && pickup) {
@@ -324,24 +329,43 @@ function CommandeAccepteeContent() {
         const pLat = Number(pickup.lat);
         const pLon = Number(pickup.lon);
         if (Number.isFinite(dLat) && Number.isFinite(dLon) && Number.isFinite(pLat) && Number.isFinite(pLon)) {
-          layersRef.current.routeDriverToClient = L.polyline(
-            [[dLat, dLon], [pLat, pLon]],
-            { color: "#fb923c", weight: 5, opacity: 0.9, lineCap: 'round', lineJoin: 'round' }
-          ).addTo(map);
-          try { layersRef.current.routeDriverToClient.bringToFront(); } catch {}
+          const from = { lat: dLat, lon: dLon };
+          const last = driverRouteRef.current;
+          const movedM = last.from ? haversineKm(last.from, from) * 1000 : Infinity;
+          const style = { color: "#fb923c", weight: 5, opacity: 0.9, lineCap: 'round', lineJoin: 'round' };
+          if (movedM > 50 || !last.coords) {
+            driverRouteRef.current.from = from;
+            const line = L.polyline([[dLat, dLon], [pLat, pLon]], style).addTo(map);
+            layersRef.current.routeDriverToClient = line;
+            try { line.bringToFront(); } catch {}
+            fetchRoute(from, { lat: pLat, lon: pLon }).then((r) => {
+              if (!r || layersRef.current.routeDriverToClient !== line) return;
+              driverRouteRef.current.coords = r.coordinates;
+              setRouteEta({ distanceKm: r.distanceKm, durationMin: r.durationMin });
+              try { line.setLatLngs(r.coordinates); } catch {}
+            });
+          } else {
+            const line = L.polyline(last.coords, style).addTo(map);
+            layersRef.current.routeDriverToClient = line;
+            try { line.bringToFront(); } catch {}
+          }
         }
       }
+    } else {
+      driverRouteRef.current = { from: null, coords: null };
+      setRouteEta(null);
     }
 
-    // fit bounds if we have at least two points
+    // fit bounds if we have at least two points (leave room for the bottom sheet)
     if (pts.length >= 2) {
-      try { map.fitBounds(L.latLngBounds(pts), { padding: [30, 30] }); } catch {}
+      const bottomPad = typeof window !== "undefined" ? Math.round(window.innerHeight * 0.5) : 300;
+      try { map.fitBounds(L.latLngBounds(pts), { paddingTopLeft: [24, 80], paddingBottomRight: [24, bottomPad] }); } catch {}
     } else if (pts.length === 1) {
       try { map.setView(pts[0], 15); } catch {}
     }
 
     setTimeout(() => { try { map.invalidateSize(false); } catch {} }, 0);
-  }, [pickup, destination, clientPos, driverPos, phase, isDriverAssigned]);
+  }, [pickup, destination, clientPos, driverPos, phase, isDriverAssigned, mapReady]);
 
   const confirmCancel = async () => {
     try {
@@ -427,7 +451,6 @@ function CommandeAccepteeContent() {
     }
   };
 
-  const callDriver = () => (driverInfo?.phone ? (window.location.href = `tel:${driverInfo.phone}`) : null);
   const smsDriver = () => (driverInfo?.phone ? (window.location.href = `sms:${driverInfo.phone}`) : null);
   const sos = () => toast.error("SOS déclenché. Nos équipes de sécurité sont alertées.");
 
@@ -436,50 +459,81 @@ function CommandeAccepteeContent() {
   const tripPrice = useMemo(() => order?.priceEstimate ?? (tripKm ? Math.max(700, Math.round(300 + tripKm * 180)) : '—'), [order?.priceEstimate, tripKm]);
 
   return (
-    <div className="min-h-screen bg-white">
-      {/* Top bar */}
-      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-amber-100">
-        <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => router.back()}
-              aria-label="Retour"
-              className="p-2 rounded-lg text-slate-600 hover:bg-slate-100"
-            >
-              <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor"><path d="M15.75 19.5a.75.75 0 0 1-.53-.22l-6-6a.75.75 0 0 1 0-1.06l6-6a.75.75 0 1 1 1.06 1.06L10.31 12l5.97 5.72a.75.75 0 0 1-.53 1.28Z"/></svg>
-            </button>
-            <div className="flex items-center gap-2">
-              <svg className="w-6 h-6 text-orange-600" viewBox="0 0 24 24" fill="currentColor"><path d="M5 12a7 7 0 0 1 14 0v6a2 2 0 0 1-2 2h-3a1 1 0 0 1-1-1v-3H11v3a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2v-6Z"/></svg>
-              <span className="font-bold text-slate-800">Commande acceptée</span>
-            </div>
+    <div className="relative h-[100dvh] overflow-hidden bg-white">
+      {/* Carte plein écran (isolate: les z-index internes de Leaflet restent sous la sheet) */}
+      <div ref={mapContainerRef} className="absolute inset-0 isolate" />
+
+      {/* Barre flottante : retour + indicateur temps réel */}
+      <div className="absolute top-0 inset-x-0 z-[500] pointer-events-none">
+        <div className="max-w-md mx-auto px-3 pt-3 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            aria-label="Retour"
+            className="pointer-events-auto w-10 h-10 shrink-0 bg-white rounded-full shadow-md flex items-center justify-center text-slate-600"
+          >
+            <img src="/retour.svg" alt="Retour" className="w-5 h-5" />
+          </button>
+          <div className="pointer-events-auto bg-white rounded-full shadow-md px-4 py-2.5 flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isDriverAssigned ? 'bg-emerald-400' : 'bg-orange-400'}`} />
+              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isDriverAssigned ? 'bg-emerald-500' : 'bg-orange-500'}`} />
+            </span>
+            <span className="text-sm font-medium text-slate-700">Position en temps réel</span>
           </div>
         </div>
       </div>
 
-      <div className="max-w-md mx-auto p-4 space-y-4">
-        {/* Map */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
-          <div className="text-xs text-slate-500 mb-2">Position en temps réel</div>
-          <div className="w-full h-64 rounded-xl overflow-hidden">
-            <div ref={mapContainerRef} className="w-full h-64" />
+      {/* Bottom sheet */}
+      <RideBottomSheet
+        footer={(
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={sos} className="bg-red-50 hover:bg-red-100 text-red-700 rounded-xl py-3 text-sm font-semibold">SOS</button>
+            <button type="button" onClick={() => setShowCancel(true)} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl py-3 text-sm font-medium">Annuler</button>
           </div>
-          <div className="mt-2 flex items-center justify-between text-sm text-slate-700">
-            {isDriverAssigned ? (
-              <div className="flex items-center gap-2">
-                <svg viewBox="0 0 24 24" className="w-5 h-5 text-slate-500" fill="currentColor"><path d="M12 8a1 1 0 0 1 1 1v3.38l2.24 1.29a1 1 0 1 1-1 1.74l-2.74-1.58A1 1 0 0 1 11 13V9a1 1 0 0 1 1-1Zm0-6a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z"/></svg>
-                <span>{etaMin ? `${etaMin} min` : "—"}</span>
-                <span>•</span>
-                <span>{phase === "to_pickup" ? "Arrivée conducteur" : "Arrivée destination"}</span>
+        )}
+      >
+        {/* État de la commande + prix */}
+        <div className="pt-1">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${isDriverAssigned ? 'bg-emerald-400' : 'bg-orange-400'}`} />
+              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${isDriverAssigned ? 'bg-emerald-500' : 'bg-orange-500'}`} />
+            </span>
+            <span className="text-sm font-semibold text-slate-800">
+              {isDriverAssigned
+                ? (phase === "to_pickup" ? "Conducteur en route vers vous" : "En route vers la destination")
+                : "À la recherche d’un conducteur"}
+            </span>
+            <button
+              type="button"
+              onClick={shareRide}
+              aria-label="Partager la commande"
+              title="Partager"
+              className="ml-auto shrink-0 w-9 h-9 rounded-full bg-slate-100 hover:bg-slate-200 text-slate-600 flex items-center justify-center"
+            >
+              <img src="/partager.svg" alt="" className="w-4 h-4" />
+            </button>
+          </div>
+          {!isDriverAssigned && (
+            <div className="text-xs text-slate-500 mt-0.5 pl-5">Nous contactons les conducteurs à proximité…</div>
+          )}
+          <div className="flex items-end justify-between gap-3 mt-2">
+            <div className="text-3xl font-black text-slate-900">
+              {tripPrice !== '—' ? `~${tripPrice} CFA` : '—'}
+            </div>
+            {isDriverAssigned && (
+              <div className="text-sm font-medium text-slate-600 pb-1 whitespace-nowrap">
+                {etaMin ? `${etaMin} min` : "—"} • {phase === "to_pickup" ? "arrivée conducteur" : "arrivée destination"}
               </div>
-            ) : (
-              <div className="text-slate-600">À la recherche d’un conducteur</div>
             )}
-            <div className="font-semibold text-slate-900">{tripPrice !== '—' ? `~${tripPrice} CFA` : '—'}</div>
+          </div>
+          <div className="text-xs text-slate-500 truncate mt-1">
+            {pickup?.name || "Départ"} → {destination?.name || "Destination"}
           </div>
         </div>
 
-        {/* Driver card (only once a driver is assigned) */}
+        {/* Carte conducteur (une fois assigné) */}
         {isDriverAssigned && (
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
             <div className="flex items-center gap-3">
@@ -506,38 +560,57 @@ function CommandeAccepteeContent() {
           </div>
         )}
 
-        {/* Order details (passengers, baggage, totals) */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
-          <div className="text-sm font-semibold text-slate-800">Détails de la commande</div>
-          <div className="mt-1 text-sm text-slate-700">
-            <div><span className="font-medium">Passagers:</span> {order?.passengers ?? '—'}</div>
-            <div><span className="font-medium">Bagages:</span> {order?.bags ?? 0}</div>
-            <div className="text-xs text-slate-500">Offre bagages: {typeof order?.bagOffer === 'number' ? `${order.bagOffer} CFA` : '—'}</div>
+        {/* Détails de la commande */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4 space-y-3">
+          <div className="text-sm font-semibold text-slate-700">Détails de la commande</div>
+          <div className="divide-y divide-slate-100 text-sm">
+            <div className="flex justify-between items-center py-2">
+              <span className="text-slate-600">Départ:</span>
+              <span className="font-medium text-slate-900 text-right truncate pl-3">{pickup?.name || "—"}</span>
+            </div>
+            <div className="flex justify-between items-center py-2">
+              <span className="text-slate-600">Destination:</span>
+              <span className="font-medium text-slate-900 text-right truncate pl-3">{destination?.name || "—"}</span>
+            </div>
+            <div className="flex justify-between items-center py-2">
+              <span className="text-slate-600">Passagers:</span>
+              <span className="font-medium text-slate-900">{order?.passengers ?? '—'}</span>
+            </div>
+            <div className="flex justify-between items-center py-2">
+              <span className="text-slate-600">Bagages:</span>
+              <span className="font-medium text-slate-900">{order?.bags ?? 0}</span>
+            </div>
+            <div className="flex justify-between items-center py-2">
+              <span className="text-slate-600">Offre bagages:</span>
+              <span className="font-medium text-slate-900">{typeof order?.bagOffer === 'number' ? `${order.bagOffer} CFA` : '—'}</span>
+            </div>
             {order?.bagDescription ? (
-              <div className="text-xs text-slate-500">Description: {order.bagDescription}</div>
+              <div className="flex justify-between items-center py-2">
+                <span className="text-slate-600">Description:</span>
+                <span className="font-medium text-slate-900 text-right truncate pl-3">{order.bagDescription}</span>
+              </div>
             ) : null}
-            <div className="mt-1 text-sm font-semibold text-slate-900">Total estimé: {typeof order?.priceEstimate === 'number' ? `${order.priceEstimate} CFA` : '—'}</div>
+            <div className="pt-2">
+              <div className="flex justify-between items-center py-2">
+                <span className="font-semibold text-slate-700">Total estimé:</span>
+                <span className="font-bold text-lg text-orange-600">{typeof order?.priceEstimate === 'number' ? `~${order.priceEstimate} CFA` : '—'}</span>
+              </div>
+            </div>
           </div>
         </div>
+      </RideBottomSheet>
 
-        {/* Actions */}
-        <div className="grid grid-cols-3 gap-3">
-          <button type="button" onClick={shareRide} className="bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl py-3 text-sm">Partager</button>
-          <button type="button" onClick={sos} className="bg-red-50 hover:bg-red-100 text-red-700 rounded-xl py-3 text-sm">SOS</button>
-          <button type="button" onClick={() => setShowCancel(true)} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl py-3 text-sm">Annuler</button>
-        </div>
-
-        {/* Cancel policy modal */}
+      {/* Cancel policy modal */}
       {showCancel && (
-        <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40">
+        <div className="fixed inset-0 flex items-center justify-center bg-black/40" style={{ zIndex: 9999 }}>
           <div className="bg-white rounded-2xl shadow-xl w-[90%] max-w-sm p-4">
             <div className="text-base font-semibold text-slate-800">Annuler la commande ?</div>
             <p className="text-sm text-slate-600 mt-1">
               L'annulation peut entraîner des frais si le conducteur est proche de votre point de départ.
             </p>
-            <ul className="text-xs text-slate-500 mt-2 list-disc pl-5 space-y-1">
-              <li>Frais possible: 300 CFA</li>
-              <li>Vous pouvez reprogrammer depuis l'écran de commande</li>
+            <ul className="text-xs text-slate-500 mt-2 space-y-1">
+              <li>• Le conducteur sera notifié immédiatement</li>
+              <li>• Vous pouvez reprogrammer depuis l'écran de commande</li>
             </ul>
             <div className="mt-4 grid grid-cols-2 gap-2">
               <button type="button" onClick={() => setShowCancel(false)} className="bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl py-2 text-sm">Continuer</button>
@@ -596,9 +669,6 @@ function CommandeAccepteeContent() {
           </div>
         </div>
       )}
-      </div>
-
-      <div className="h-8" />
     </div>
   );
 }

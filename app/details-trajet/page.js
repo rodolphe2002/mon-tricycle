@@ -136,14 +136,14 @@ function DetailsTrajetContent() {
               <span className="mt-0.5 w-4 h-4 rounded-full bg-emerald-500 inline-block" />
               <div>
                 <div className="text-slate-500 text-xs">Départ</div>
-                <div className="font-medium text-slate-800">{pickup?.label || `${pickup?.lat ?? "—"}, ${pickup?.lon ?? "—"}`}</div>
+                <div className="font-medium text-slate-800">{pickup?.name || `${pickup?.lat ?? "—"}, ${pickup?.lon ?? "—"}`}</div>
               </div>
             </div>
             <div className="flex items-start gap-2">
               <span className="mt-0.5 w-4 h-4 rounded-full bg-orange-500 inline-block" />
               <div>
                 <div className="text-slate-500 text-xs">Arrivée</div>
-                <div className="font-medium text-slate-800">{destination?.label || `${destination?.lat ?? "—"}, ${destination?.lon ?? "—"}`}</div>
+                <div className="font-medium text-slate-800">{destination?.name || `${destination?.lat ?? "—"}, ${destination?.lon ?? "—"}`}</div>
               </div>
             </div>
             <div className="grid grid-cols-2 gap-3 pt-2">

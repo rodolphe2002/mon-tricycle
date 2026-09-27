@@ -1,8 +1,10 @@
 "use client";
 
-import { Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { fetchRoute } from "../lib/routing";
 import { useToast } from "../components/ToastProvider";
+import RideBottomSheet from "../components/RideBottomSheet";
 
 const toRad = (x) => (x * Math.PI) / 180;
 const haversineKm = (a, b) => {
@@ -14,14 +16,6 @@ const haversineKm = (a, b) => {
   const lat2 = toRad(b.lat);
   const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLon / 2) ** 2;
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
-};
-
-const VIEWPORT = { minLat: 5.28, maxLat: 5.38, minLon: -4.10, maxLon: -3.95 };
-const projectToViewBox = ({ lat, lon }, width, height) => {
-  const pad = 12;
-  const x = ((lon - VIEWPORT.minLon) / (VIEWPORT.maxLon - VIEWPORT.minLon)) * (width - 2 * pad) + pad;
-  const y = (1 - (lat - VIEWPORT.minLat) / (VIEWPORT.maxLat - VIEWPORT.minLat)) * (height - 2 * pad) + pad;
-  return { x, y };
 };
 
 function TrajetEnCoursContent() {
@@ -47,12 +41,20 @@ function TrajetEnCoursContent() {
   const [error, setError] = useState('');
   const locPollRef = useRef(null);
   const [share, setShare] = useState({ open: false, url: "" });
+  const [routeInfo, setRouteInfo] = useState(null); // real road route pickup->dest {distanceKm, durationMin}
+  // Bumps when the Leaflet map finishes initializing so dependent effects re-run
+  const [mapReady, setMapReady] = useState(false);
+  const [sheetH, setSheetH] = useState(0);
 
   const pickup = order?.start || null;
   const destination = order?.destination || null;
 
   const speedKmh = 22;
-  const totalKm = useMemo(() => (pickup && destination ? haversineKm(pickup, destination) : 0), [pickup?.lat, pickup?.lon, destination?.lat, destination?.lon]);
+  // Prefer real road distance (OSRM) over straight-line estimate
+  const totalKm = useMemo(() => {
+    if (routeInfo?.distanceKm) return routeInfo.distanceKm;
+    return (pickup && destination ? haversineKm(pickup, destination) : 0);
+  }, [routeInfo, pickup?.lat, pickup?.lon, destination?.lat, destination?.lon]);
   // Fallback: if driverPos unknown, remaining = total (progress = 0%)
   const remainingKm = useMemo(() => {
     if (driverPos && destination) return haversineKm(driverPos, destination);
@@ -125,8 +127,6 @@ function TrajetEnCoursContent() {
     return () => { if (locPollRef.current) clearInterval(locPollRef.current); locPollRef.current = null; };
   }, [driverInfo?.id, router]);
 
-  // Preferences removed
-
   const shareRide = async () => {
     try {
       if (!orderId) { toast.error('Commande inconnue'); return; }
@@ -169,9 +169,20 @@ function TrajetEnCoursContent() {
   // Leaflet map
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
-  const layersRef = useRef({ base: null, driver: null, pickup: null, dest: null, routeFull: null, trace: null });
+  const layersRef = useRef({ base: null, driver: null, pickup: null, dest: null, routeFull: null, routeLabels: null, trace: null });
   const LRef = useRef(null);
   const driverPathRef = useRef([]); // accumulated driver latlngs
+  const fitDoneRef = useRef(false); // fit bounds once, then follow driver only if needed
+
+  const onSheetHeight = useCallback((h) => setSheetH(h), []);
+
+  // Fit bounds leaving room for the bottom sheet (same as /commander)
+  const fitTripBounds = useCallback((bounds) => {
+    const map = mapRef.current;
+    if (!map || !bounds) return;
+    const bottomPad = Math.max(120, Math.round((sheetH || 0) * 0.9));
+    try { map.fitBounds(bounds, { paddingTopLeft: [24, 90], paddingBottomRight: [24, bottomPad] }); } catch {}
+  }, [sheetH]);
 
   // init map once
   useEffect(() => {
@@ -181,132 +192,270 @@ function TrajetEnCoursContent() {
       const L = (await import('leaflet')).default;
       if (!mounted) return;
       LRef.current = L;
-      // Fix marker icon 404: use CDN images for default marker
-      const DefaultIcon = L.icon({
-        iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-        iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-        shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
-        iconSize: [25, 41], iconAnchor: [12, 41], popupAnchor: [1, -34], tooltipAnchor: [16, -28], shadowSize: [41, 41],
-      });
-      L.Marker.prototype.options.icon = DefaultIcon;
       const cLat = (pickup?.lat ?? 5.345);
       const cLon = (pickup?.lon ?? -4.02);
-      const map = L.map(mapContainerRef.current).setView([cLat, cLon], 14);
+      const map = L.map(mapContainerRef.current, { zoomControl: false }).setView([cLat, cLon], 14);
       const base = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
         attribution: '&copy; OpenStreetMap contributors',
+        updateWhenIdle: false,
+        updateWhenZooming: true,
+        keepBuffer: 2,
       }).addTo(map);
       mapRef.current = map;
       layersRef.current.base = base;
+      setMapReady(true);
       setTimeout(() => { try { map.invalidateSize(false); } catch {} }, 0);
     })();
     return () => { mounted = false; };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // update markers and lines
   useEffect(() => {
     const map = mapRef.current; const L = LRef.current;
     if (!map || !L) return;
-    for (const k of ['pickup','dest','routeFull']) { // keep persistent driver and trace
+    for (const k of ['pickup', 'dest', 'routeFull']) { // keep persistent driver and trace
       if (layersRef.current[k]) { try { layersRef.current[k].remove(); } catch {} layersRef.current[k] = null; }
     }
+    if (layersRef.current.routeLabels) {
+      layersRef.current.routeLabels.forEach((l) => { try { l.remove(); } catch {} });
+      layersRef.current.routeLabels = null;
+    }
+
+    // Compact endpoint pins: white circle, thick dark border, modal icon inside (same as /commander)
+    const pinIcon = (src, alt) =>
+      L.divIcon({
+        className: "",
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
+        popupAnchor: [0, -14],
+        tooltipAnchor: [0, -14],
+        html: `<div style="width:30px;height:30px;border-radius:9999px;background:#fff;border:4px solid #1f2937;box-shadow:0 1px 5px rgba(15,23,42,.35);display:flex;align-items:center;justify-content:center"><img src="${src}" alt="${alt}" style="width:15px;height:15px;display:block" /></div>`,
+      });
+
+    // Vehicle marker: orange circle, thick white border, car glyph inside
+    const driverIcon = L.divIcon({
+      className: "tricycle-driver-marker",
+      iconSize: [40, 40],
+      iconAnchor: [20, 20],
+      tooltipAnchor: [0, -20],
+      html: `<div style="width:40px;height:40px;border-radius:9999px;background:#ea580c;border:4px solid #fff;box-shadow:0 2px 8px rgba(15,23,42,.4);display:flex;align-items:center;justify-content:center"><svg viewBox="0 0 24 24" width="20" height="20" fill="#fff"><path d="M5 12a7 7 0 0 1 14 0v6a2 2 0 0 1-2 2h-3a1 1 0 0 1-1-1v-3H11v3a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2v-6Z"/></svg></div>`,
+    });
+
     const pts = [];
-    const addMarker = (pt, label) => { if (!pt?.lat || !pt?.lon) return null; pts.push(L.latLng(pt.lat, pt.lon)); return L.marker([pt.lat, pt.lon]).addTo(map).bindTooltip(label); };
-    if (pickup) layersRef.current.pickup = addMarker(pickup, 'Départ');
-    if (destination) layersRef.current.dest = addMarker(destination, 'Arrivée');
-    // Driver marker: persist and update smoothly
+    if (pickup?.lat != null && pickup?.lon != null) {
+      layersRef.current.pickup = L.marker([pickup.lat, pickup.lon], { icon: pinIcon("/depart.png", "Départ") }).addTo(map).bindTooltip("Départ");
+      pts.push(L.latLng(pickup.lat, pickup.lon));
+    }
+    if (destination?.lat != null && destination?.lon != null) {
+      layersRef.current.dest = L.marker([destination.lat, destination.lon], { icon: pinIcon("/destination.png", "Arrivée") }).addTo(map).bindTooltip("Arrivée");
+      pts.push(L.latLng(destination.lat, destination.lon));
+    }
+
+    // Driver marker: persist and update smoothly (CSS transition animates the move)
     if (driverPos && Number.isFinite(Number(driverPos.lat)) && Number.isFinite(Number(driverPos.lon))) {
       const dLatLng = L.latLng(Number(driverPos.lat), Number(driverPos.lon));
       if (layersRef.current.driver) {
-        try { layersRef.current.driver.setLatLng(dLatLng); layersRef.current.driver.bindTooltip('Conducteur'); layersRef.current.driver.bringToFront(); } catch {}
+        try { layersRef.current.driver.setLatLng(dLatLng); layersRef.current.driver.bringToFront(); } catch {}
       } else {
-        layersRef.current.driver = L.marker(dLatLng).addTo(map).bindTooltip('Conducteur');
+        layersRef.current.driver = L.marker(dLatLng, { icon: driverIcon }).addTo(map).bindTooltip('Conducteur');
         try { layersRef.current.driver.bringToFront(); } catch {}
       }
       // accumulate trace
       driverPathRef.current.push(dLatLng);
       if (driverPathRef.current.length > 1) {
         if (layersRef.current.trace) { try { layersRef.current.trace.setLatLngs(driverPathRef.current); layersRef.current.trace.bringToFront(); } catch {} }
-        else { layersRef.current.trace = L.polyline(driverPathRef.current, { color:'#fb923c', weight:3, opacity:0.7 }).addTo(map); }
+        else { layersRef.current.trace = L.polyline(driverPathRef.current, { color: '#0f172a', weight: 3, opacity: 0.6 }).addTo(map); }
       }
       pts.push(dLatLng);
     }
-    // full route pickup->dest (fixed itinerary selected by client)
+
+    // full route pickup->dest (fixed itinerary selected by client) — real road route via OSRM
     if (pickup && destination) {
-      layersRef.current.routeFull = L.polyline([[pickup.lat,pickup.lon],[destination.lat,destination.lon]], { color:'#94a3b8', weight:3, dashArray:'6 6' }).addTo(map);
+      const line = L.polyline([[pickup.lat, pickup.lon], [destination.lat, destination.lon]], { color: '#94a3b8', weight: 3, dashArray: '6 6' }).addTo(map);
+      layersRef.current.routeFull = line;
+      fetchRoute(pickup, destination).then((r) => {
+        if (!r || layersRef.current.routeFull !== line) return;
+        setRouteInfo({ distanceKm: r.distanceKm, durationMin: r.durationMin });
+        try {
+          line.setLatLngs(r.coordinates);
+          if (!r.fallback) line.setStyle({ color: '#fb923c', weight: 5, opacity: 0.9, dashArray: null });
+
+          // Route labels: distance on the line + ETA badge (same as /commander)
+          const coords = r.coordinates;
+          if (coords.length >= 2) {
+            const kmLabel = Number.isFinite(r.distanceKm) ? `${r.distanceKm.toFixed(1)} km` : null;
+            const etaLabel = Number.isFinite(r.durationMin) ? `${Math.round(r.durationMin)} min` : null;
+            const labels = [];
+            if (kmLabel) {
+              const at = coords[Math.floor(coords.length * 0.45)];
+              labels.push(
+                L.marker(at, {
+                  interactive: false,
+                  keyboard: false,
+                  icon: L.divIcon({
+                    className: "",
+                    iconSize: [56, 20],
+                    iconAnchor: [28, 10],
+                    html: `<div style="background:rgba(255,255,255,.95);color:#334155;font-weight:700;font-size:11px;line-height:20px;text-align:center;border-radius:6px;box-shadow:0 1px 4px rgba(15,23,42,.25);white-space:nowrap">${kmLabel}</div>`,
+                  }),
+                }).addTo(map)
+              );
+            }
+            if (etaLabel) {
+              const at = coords[Math.floor(coords.length * 0.65)];
+              labels.push(
+                L.marker(at, {
+                  interactive: false,
+                  keyboard: false,
+                  icon: L.divIcon({
+                    className: "",
+                    iconSize: [56, 28],
+                    iconAnchor: [28, 14],
+                    html: `<div style="background:#ea580c;color:#fff;font-weight:800;font-size:12px;line-height:22px;text-align:center;border-radius:8px;border:3px solid #fff;box-shadow:0 2px 8px rgba(15,23,42,.3);white-space:nowrap">${etaLabel}</div>`,
+                  }),
+                }).addTo(map)
+              );
+            }
+            layersRef.current.routeLabels = labels;
+          }
+        } catch {}
+      });
     }
-    // Do not draw driver->destination polyline; only the fixed itinerary should be shown
-    if (pts.length >= 2) { try { map.fitBounds(L.latLngBounds(pts), { padding:[30,30] }); } catch {} } else if (pts.length === 1) { try { map.setView(pts[0], 15); } catch {} }
+
+    // Fit once when we first have meaningful geometry, then only re-center on
+    // the driver when it leaves the visible area (lets the user pan/zoom freely).
+    if (!fitDoneRef.current && pts.length >= 2) {
+      fitDoneRef.current = true;
+      fitTripBounds(L.latLngBounds(pts));
+    } else if (!fitDoneRef.current && pts.length === 1) {
+      try { map.setView(pts[0], 15); } catch {}
+    } else if (driverPos && Number.isFinite(Number(driverPos.lat)) && Number.isFinite(Number(driverPos.lon))) {
+      const dLatLng = L.latLng(Number(driverPos.lat), Number(driverPos.lon));
+      try { if (!map.getBounds().pad(-0.15).contains(dLatLng)) map.panTo(dLatLng, { animate: true }); } catch {}
+    }
     setTimeout(() => { try { map.invalidateSize(false); } catch {} }, 0);
-  }, [pickup, destination, driverPos]);
+  }, [pickup, destination, driverPos, mapReady, fitTripBounds]);
 
   return (
-    <div className="min-h-screen bg-white">
-      {/* Top bar */}
-      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-amber-100">
-        <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <svg className="w-6 h-6 text-orange-600" viewBox="0 0 24 24" fill="currentColor"><path d="M5 12a7 7 0 0 1 14 0v6a2 2 0 0 1-2 2h-3a1 1 0 0 1-1-1v-3H11v3a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2v-6Z"/></svg>
-            <span className="font-bold text-slate-800">Trajet en cours</span>
+    <div className="relative h-[100dvh] overflow-hidden bg-white">
+      {/* Carte plein écran (isolate: les z-index internes de Leaflet restent sous la sheet) */}
+      <div ref={mapContainerRef} className="absolute inset-0 isolate" />
+
+      {/* Barre flottante : retour + indicateur temps réel */}
+      <div className="absolute top-0 inset-x-0 z-[500] pointer-events-none">
+        <div className="max-w-md mx-auto px-3 pt-3 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            aria-label="Retour"
+            className="pointer-events-auto w-10 h-10 shrink-0 bg-white rounded-full shadow-md flex items-center justify-center text-slate-600"
+          >
+            <img src="/retour.svg" alt="Retour" className="w-5 h-5" />
+          </button>
+          <div className="pointer-events-auto bg-white rounded-full shadow-md px-4 py-2.5 flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${driverPos ? 'bg-emerald-400' : 'bg-orange-400'}`} />
+              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${driverPos ? 'bg-emerald-500' : 'bg-orange-500'}`} />
+            </span>
+            <span className="text-sm font-medium text-slate-700">Suivi en temps réel</span>
           </div>
-          <button type="button" onClick={() => router.push("/")} className="text-sm text-orange-700 hover:underline">Accueil</button>
         </div>
       </div>
 
-      <div className="max-w-md mx-auto p-4 space-y-4">
-        {/* Map */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
-          <div className="text-xs text-slate-500 mb-2">Progression du trajet</div>
-          <div className="w-full h-64 rounded-xl overflow-hidden">
-            <div ref={mapContainerRef} className="w-full h-64" />
+      {/* Bottom sheet */}
+      <RideBottomSheet
+        onHeightChange={onSheetHeight}
+        footer={(
+          <div className="grid grid-cols-2 gap-2">
+            <button type="button" onClick={shareRide} className="bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl py-3 text-sm font-medium">Partager</button>
+            <button type="button" onClick={sos} className="bg-red-50 hover:bg-red-100 text-red-700 rounded-xl py-3 text-sm font-semibold">SOS</button>
           </div>
-          <div className="mt-2 flex items-center justify-between text-sm text-slate-700">
-            <div className="flex items-center gap-2">
-              <svg viewBox="0 0 24 24" className="w-5 h-5 text-slate-500" fill="currentColor"><path d="M12 8a1 1 0 0 1 1 1v3.38l2.24 1.29a1 1 0 1 1-1 1.74l-2.74-1.58A1 1 0 0 1 11 13V9a1 1 0 0 1 1-1Zm0-6a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z"/></svg>
-              <span>{remainingKm ? `${remainingKm.toFixed(1)} km` : "—"}</span>
-              <span>•</span>
-              <span>{etaMin ? `${etaMin} min` : "—"}</span>
+        )}
+      >
+        {/* État + distance/temps restant */}
+        <div className="pt-1">
+          <div className="flex items-center gap-2">
+            <span className="relative flex h-2.5 w-2.5 shrink-0">
+              <span className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${driverPos ? 'bg-emerald-400' : 'bg-orange-400'}`} />
+              <span className={`relative inline-flex rounded-full h-2.5 w-2.5 ${driverPos ? 'bg-emerald-500' : 'bg-orange-500'}`} />
+            </span>
+            <span className="text-sm font-semibold text-slate-800">Trajet en cours</span>
+          </div>
+          <div className="flex items-end justify-between gap-3 mt-2">
+            <div className="text-3xl font-black text-slate-900">
+              {remainingKm ? `${remainingKm.toFixed(1)} km` : '—'}
             </div>
-            <div className="text-xs text-slate-500">{progressPct}%</div>
+            <div className="text-sm font-medium text-slate-600 pb-1 whitespace-nowrap">
+              {etaMin ? `${etaMin} min` : '—'} restantes
+            </div>
           </div>
-          <div className="mt-3 w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-            <div className="bg-orange-500 h-2" style={{ width: `${progressPct}%` }} />
+          <div className="text-xs text-slate-500 truncate mt-1">
+            {pickup?.name || 'Départ'} → {destination?.name || 'Destination'}
           </div>
         </div>
 
-        {/* Actions */}
-        <div className="grid grid-cols-3 gap-3">
-          <button type="button" onClick={shareRide} className="bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl py-3 text-sm">Partager</button>
-          <button type="button" onClick={sos} className="bg-red-50 hover:bg-red-100 text-red-700 rounded-xl py-3 text-sm">SOS</button>
-          <button type="button" onClick={() => router.push(`/details-trajet${orderId ? `?id=${encodeURIComponent(orderId)}` : ''}`)} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-xl py-3 text-sm">Détails</button>
+        {/* Progression du trajet */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-4">
+          <div className="flex items-center justify-between text-sm">
+            <span className="text-slate-600">Progression</span>
+            <span className="font-semibold text-slate-800">{progressPct}%</span>
+          </div>
+          <div className="mt-2 w-full bg-slate-100 rounded-full h-2 overflow-hidden">
+            <div className="bg-orange-500 h-2 rounded-full transition-all duration-700" style={{ width: `${progressPct}%` }} />
+          </div>
+          <div className="mt-2 text-xs text-slate-500">
+            La carte suit le déplacement du conducteur en temps réel.
+          </div>
         </div>
 
-        {/* Share fallback modal */}
-        {share.open && (
-          <div className="fixed inset-0 z-20 flex items-center justify-center bg-black/40">
-            <div className="bg-white rounded-2xl shadow-xl w-[90%] max-w-sm p-4">
-              <div className="flex items-center justify-between mb-2">
-                <div className="text-base font-semibold text-slate-800">Lien de suivi</div>
-                <button type="button" onClick={() => setShare({ open: false, url: '' })} className="text-slate-500 hover:text-slate-700">Fermer</button>
-              </div>
-              <div className="text-xs text-slate-500 mb-2">Copiez ce lien pour le partager</div>
-              <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 break-all text-xs text-slate-700">{share.url}</div>
-              <div className="mt-3 flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={async () => {
-                    try { await navigator.clipboard?.writeText(share.url); toast.success('Lien copié'); } catch { toast.error('Copie impossible'); }
-                  }}
-                  className="bg-orange-600 hover:bg-orange-700 text-white rounded-lg px-3 py-2 text-sm"
-                >Copier</button>
+        {/* Conducteur */}
+        {driverInfo && (
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
+            <div className="flex items-center gap-3">
+              <img src={`https://api.dicebear.com/7.x/identicon/svg?seed=${encodeURIComponent(driverInfo?.name || 'driver')}`} alt={driverInfo?.name || ''} className="w-12 h-12 rounded-xl object-cover bg-slate-100" />
+              <div className="flex-1 min-w-0">
+                <div className="font-semibold text-slate-800 truncate">{driverInfo?.name || '—'}</div>
+                <div className="text-xs text-slate-500 truncate">
+                  <span>{driverInfo?.phone || '—'}</span>
+                  {driverInfo?.plate ? (<><span className="mx-1">•</span><span>Plaque {driverInfo.plate}</span></>) : null}
+                </div>
               </div>
             </div>
           </div>
         )}
-      </div>
 
-      <div className="h-8" />
+        {error ? <div className="text-sm text-red-600">{error}</div> : null}
+
+        <button
+          type="button"
+          onClick={() => router.push(`/details-trajet${orderId ? `?id=${encodeURIComponent(orderId)}` : ''}`)}
+          className="text-xs font-medium text-orange-700 hover:underline"
+        >Voir les détails du trajet</button>
+      </RideBottomSheet>
+
+      {/* Share fallback modal */}
+      {share.open && (
+        <div className="fixed inset-0 flex items-center justify-center bg-black/40" style={{ zIndex: 9999 }}>
+          <div className="bg-white rounded-2xl shadow-xl w-[90%] max-w-sm p-4">
+            <div className="flex items-center justify-between mb-2">
+              <div className="text-base font-semibold text-slate-800">Lien de suivi</div>
+              <button type="button" onClick={() => setShare({ open: false, url: '' })} className="text-slate-500 hover:text-slate-700">Fermer</button>
+            </div>
+            <div className="text-xs text-slate-500 mb-2">Copiez ce lien pour le partager</div>
+            <div className="bg-slate-50 border border-slate-200 rounded-xl p-2 break-all text-xs text-slate-700">{share.url}</div>
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <button
+                type="button"
+                onClick={async () => {
+                  try { await navigator.clipboard?.writeText(share.url); toast.success('Lien copié'); } catch { toast.error('Copie impossible'); }
+                }}
+                className="bg-orange-600 hover:bg-orange-700 text-white rounded-lg px-3 py-2 text-sm"
+              >Copier</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

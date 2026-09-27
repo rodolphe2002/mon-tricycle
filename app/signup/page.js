@@ -19,6 +19,16 @@ export default function SignupPage() {
   const [loading, setLoading] = useState(false);
   const [showPwd, setShowPwd] = useState(false);
   const [error, setError] = useState("");
+  const [nameError, setNameError] = useState("");
+  const [emailError, setEmailError] = useState("");
+  const [phoneError, setPhoneError] = useState("");
+  const [passwordCriteria, setPasswordCriteria] = useState({
+    hasLowercase: false,
+    hasUppercase: false,
+    hasMinLength: false,
+    hasNumber: false,
+    hasSpecialChar: false,
+  });
 
   // If already authenticated as client, skip signup and go to pre-commande
   useEffect(() => {
@@ -35,11 +45,140 @@ export default function SignupPage() {
   const onChange = (e) => {
     const { name, value, type, checked } = e.target;
     setForm((f) => ({ ...f, [name]: type === "checkbox" ? checked : value }));
+    
+    // Validation en temps réel pour le nom complet
+    if (name === "fullName") {
+      const words = value.trim().split(/\s+/);
+      if (value.trim() && words.length < 2) {
+        setNameError("Ce n'est pas un format correct de nom complet");
+      } else if (value.trim()) {
+        // Vérifier chaque mot
+        let hasInvalidWord = false;
+        let hasShortWord = false;
+        
+        for (const word of words) {
+          // Vérifier que le mot contient uniquement des lettres
+          if (!/^[a-zA-ZÀ-ÿ]+$/.test(word)) {
+            hasInvalidWord = true;
+            break;
+          }
+          // Vérifier que le mot a au moins 2 caractères
+          if (word.length < 2) {
+            hasShortWord = true;
+          }
+        }
+        
+        if (hasInvalidWord) {
+          setNameError("Ce n'est pas un format correct de nom complet");
+        } else if (hasShortWord) {
+          setNameError("Ce n'est pas un format correct de nom complet");
+        } else {
+          setNameError("");
+        }
+      } else {
+        setNameError("");
+      }
+    }
+    
+    // Validation en temps réel pour l'email
+    if (name === "email" && value.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+      if (!emailRegex.test(value.trim())) {
+        setEmailError("votre mail n'est pas correcte");
+      } else {
+        setEmailError("");
+      }
+    } else if (name === "email" && !value.trim()) {
+      setEmailError("");
+    }
+    
+    // Validation et formatage pour le téléphone
+    if (name === "phone") {
+      // Supprimer tous les caractères non numériques
+      const cleanValue = value.replace(/\D/g, '');
+      
+      // Mettre à jour le formulaire avec la valeur nettoyée
+      setForm((f) => ({ ...f, phone: cleanValue }));
+      
+      // Formater automatiquement si 10 chiffres
+      if (cleanValue.length === 10) {
+        const formatted = `${cleanValue.slice(0, 2)} ${cleanValue.slice(2, 4)} ${cleanValue.slice(4, 7)} ${cleanValue.slice(7, 10)}`;
+        setForm((f) => ({ ...f, phone: formatted }));
+        setPhoneError("");
+      } else if (cleanValue.length > 0 && cleanValue.length !== 10) {
+        setPhoneError("votre numéro est incorrect");
+      } else {
+        setPhoneError("");
+      }
+    }
+    
+    // Validation du mot de passe
+    if (name === "password") {
+      const criteria = {
+        hasLowercase: /[a-z]/.test(value),
+        hasUppercase: /[A-Z]/.test(value),
+        hasMinLength: value.length >= 8,
+        hasNumber: /\d/.test(value),
+        hasSpecialChar: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(value),
+      };
+      setPasswordCriteria(criteria);
+    }
   };
 
   const onSubmit = async (e) => {
     e.preventDefault();
     if (!form.accept) { toast.error("Veuillez accepter les conditions."); return; }
+    
+    // Validation du nom complet
+    const nameWords = form.fullName.trim().split(/\s+/);
+    if (nameWords.length < 2) {
+      toast.error("Ce n'est pas un format correct de nom complet");
+      return;
+    }
+    
+    // Vérifier chaque mot
+    for (const word of nameWords) {
+      if (!/^[a-zA-ZÀ-ÿ]+$/.test(word)) {
+        toast.error("Ce n'est pas un format correct de nom complet");
+        return;
+      }
+      if (word.length < 2) {
+        toast.error("Ce n'est pas un format correct de nom complet");
+        return;
+      }
+    }
+    
+    // Validation de l'email
+    if (form.email.trim()) {
+      const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+      if (!emailRegex.test(form.email.trim())) {
+        toast.error("votre mail n'est pas correcte");
+        return;
+      }
+    }
+    
+    // Validation du téléphone
+    const cleanPhone = form.phone.replace(/\D/g, '');
+    if (cleanPhone.length !== 10) {
+      toast.error("votre numéro est incorrect");
+      return;
+    }
+    
+    // Validation du mot de passe
+    const criteria = {
+      hasLowercase: /[a-z]/.test(form.password),
+      hasUppercase: /[A-Z]/.test(form.password),
+      hasMinLength: form.password.length >= 8,
+      hasNumber: /\d/.test(form.password),
+      hasSpecialChar: /[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(form.password),
+    };
+    
+    // Vérifier les 3 critères cruciaux : 8 caractères, minuscule et majuscule
+    if (!criteria.hasMinLength || !criteria.hasLowercase || !criteria.hasUppercase) {
+      toast.error("votre mot de passe est incorrect");
+      return;
+    }
+    
     try {
       setLoading(true);
       setError("");
@@ -47,7 +186,7 @@ export default function SignupPage() {
       const payload = {
         name: form.fullName.trim(),
         email: form.email.trim() || undefined,
-        phone: `${form.countryCode} ${form.phone}`.trim(),
+        phone: form.phone.trim(),
         district: form.neighborhood.trim() || undefined,
         password: form.password,
       };
@@ -56,8 +195,11 @@ export default function SignupPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data?.error || "Inscription échouée");
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const errorMessage = typeof data === 'string' ? data : data?.error || "Inscription échouée";
+        throw new Error(errorMessage);
+      }
 
       if (data.token) {
         if (data.role === 'driver') {
@@ -72,6 +214,10 @@ export default function SignupPage() {
       } else {
         router.push('/');
       }
+    } catch (err) {
+      const msg = err?.message || "Inscription échouée";
+      setError(msg);
+      toast.error(msg);
     } finally {
       setLoading(false);
     }
@@ -79,9 +225,9 @@ export default function SignupPage() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-400 via-orange-500 to-amber-400 flex items-center justify-center p-6">
-      <div className="w-full max-w-md bg-white/90 backdrop-blur rounded-2xl shadow-xl p-6">
+      <div className="w-full max-w-md bg-white/95 rounded-2xl shadow-xl p-6">
         <h1 className="text-2xl font-bold text-slate-800 mb-1">Créer un compte</h1>
-        <p className="text-slate-600 mb-6">Rejoignez Tricycle en 1 minute.</p>
+        <p className="text-slate-600 mb-6">Rejoignez <span className="font-bold italic">Tricycle</span> en 1 minute.</p>
         {error && (
           <div className="mb-4 text-sm text-red-600 bg-red-50 border border-red-200 rounded-xl p-2">{error}</div>
         )}
@@ -98,11 +244,14 @@ export default function SignupPage() {
                 name="fullName"
                 value={form.fullName}
                 onChange={onChange}
-                className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-3 outline-none focus:ring-2 focus:ring-orange-400"
+                className={`w-full rounded-xl border pl-10 pr-4 py-3 outline-none focus:ring-2 focus:ring-orange-400 ${nameError ? 'border-red-400' : 'border-slate-200'}`}
                 placeholder="Ex: Awa Diop"
                 required
               />
             </div>
+            {nameError && (
+              <p className="mt-1 text-sm text-red-600">{nameError}</p>
+            )}
           </div>
 
           <div>
@@ -117,11 +266,14 @@ export default function SignupPage() {
                 name="email"
                 value={form.email}
                 onChange={onChange}
-                className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-3 outline-none focus:ring-2 focus:ring-orange-400"
+                className={`w-full rounded-xl border pl-10 pr-4 py-3 outline-none focus:ring-2 focus:ring-orange-400 ${emailError ? 'border-red-400' : 'border-slate-200'}`}
                 placeholder="vous@example.com"
                 required
               />
             </div>
+            {emailError && (
+              <p className="mt-1 text-sm text-red-600">{emailError}</p>
+            )}
           </div>
 
           <div>
@@ -133,18 +285,9 @@ export default function SignupPage() {
                     {/* Globe/flag icon */}
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 2c1.657 0 3 3.134 3 6s-1.343 6-3 6-3-3.134-3-6 1.343-6 3-6Zm0 16a8 8 0 0 1-6.32-3h3.062C9.4 19.158 10.62 20 12 20Zm6.32-3A8 8 0 0 1 12 20c1.38 0 2.6-.842 3.258-3h3.062ZM5.94 7h3.063C9.4 4.842 10.62 4 12 4a8 8 0 0 1 6.32 3H15.26C14.6 9.158 13.38 10 12 10 10.62 10 9.4 9.158 8.742 7H5.94Z"/></svg>
                   </span>
-                  <select
-                    name="countryCode"
-                    value={form.countryCode}
-                    onChange={onChange}
-                    className="w-full appearance-none rounded-xl border border-slate-200 pl-10 pr-6 py-3 text-sm outline-none focus:ring-2 focus:ring-orange-400"
-                  >
-                    <option value={"+225"}>+225 (CI)</option>
-                    <option value={"+221"}>+221 (SN)</option>
-                    <option value={"+237"}>+237 (CM)</option>
-                    <option value={"+233"}>+233 (GH)</option>
-                    <option value={"+234"}>+234 (NG)</option>
-                  </select>
+                  <div className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-3 text-sm bg-slate-50 flex items-center justify-center font-medium text-slate-700">
+                    +225
+                  </div>
                 </div>
               </div>
               <div className="flex-1">
@@ -158,14 +301,17 @@ export default function SignupPage() {
                     name="phone"
                     value={form.phone}
                     onChange={onChange}
-                    className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-3 outline-none focus:ring-2 focus:ring-orange-400"
+                    className={`w-full rounded-xl border pl-10 pr-4 py-3 outline-none focus:ring-2 focus:ring-orange-400 ${phoneError ? 'border-red-400' : 'border-slate-200'}`}
                     placeholder="77 123 45 67"
                     required
                   />
                 </div>
+                {phoneError && (
+                  <p className="mt-1 text-sm text-red-600">{phoneError}</p>
+                )}
               </div>
             </div>
-            <p className="text-xs text-slate-500 mt-1">Format: {form.countryCode} 77 123 45 67</p>
+            <p className="text-xs text-slate-500 mt-1">Format: +225 77 123 45 67</p>
           </div>
 
           <div>
@@ -198,6 +344,60 @@ export default function SignupPage() {
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="currentColor" className="w-5 h-5"><path d="M12 5c-6 0-10.27 4.07-11.54 7.24a1.24 1.24 0 0 0 0 .76C1.73 16.93 6 21 12 21s10.27-4.07 11.54-7.24c.12-.33.12-.7 0-1.04C22.27 9.07 18 5 12 5Zm0 12a5 5 0 1 1 0-10 5 5 0 0 1 0 10Zm0-8a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg>
                 )}
               </button>
+            </div>
+            
+            {/* Indicateurs de validation du mot de passe */}
+            <div className="flex items-center gap-2 mt-2">
+              <div className="flex gap-1">
+                {(() => {
+                  const criteriaCount = Object.values(passwordCriteria).filter(Boolean).length;
+                  const dots = [];
+                  
+                  for (let i = 0; i < 5; i++) {
+                    let colorClass = 'bg-gray-300';
+                    
+                    if (i < criteriaCount) {
+                      if (criteriaCount <= 2) {
+                        colorClass = 'bg-red-500';
+                      } else if (criteriaCount === 3) {
+                        colorClass = 'bg-orange-500';
+                      } else if (criteriaCount === 4) {
+                        colorClass = 'bg-yellow-500';
+                      } else if (criteriaCount === 5) {
+                        colorClass = 'bg-green-500';
+                      }
+                    }
+                    
+                    dots.push(
+                      <div
+                        key={i}
+                        className={`w-2 h-2 rounded-full ${colorClass}`}
+                        title={`Pointillé ${i + 1}`}
+                      />
+                    );
+                  }
+                  
+                  return dots;
+                })()}
+              </div>
+              
+              {/* Indicateur de force du mot de passe */}
+              {form.password && (
+                <span className={`text-xs ${
+                  Object.values(passwordCriteria).filter(Boolean).length <= 2 
+                    ? 'text-red-500' 
+                    : Object.values(passwordCriteria).filter(Boolean).length <= 4
+                    ? 'text-orange-500'
+                    : 'text-green-500'
+                }`}>
+                  {Object.values(passwordCriteria).filter(Boolean).length <= 2 
+                    ? 'mot de passe trop faible' 
+                    : Object.values(passwordCriteria).filter(Boolean).length <= 4
+                    ? 'mot de passe correcte mais à améliorer'
+                    : 'mot de passe fort'
+                  }
+                </span>
+              )}
             </div>
           </div>
 

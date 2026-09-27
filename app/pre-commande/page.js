@@ -2,14 +2,29 @@
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
+import { usePersistentState } from "../lib/persist";
+import TrajetSearchModal from "../components/TrajetSearchModal";
 
 export default function PreCommandePage() {
   const router = useRouter();
-  const [query, setQuery] = useState("");
   const [recentPlaces, setRecentPlaces] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const base = process.env.NEXT_PUBLIC_API_BASE || 'http://localhost:4000';
+
+  // Trip search modal + persisted selection (shared with /commander)
+  const [modalOpen, setModalOpen] = useState(false);
+  const [startText, setStartText] = usePersistentState("tri_cmd_start_text", "");
+  const [destText, setDestText] = usePersistentState("tri_cmd_dest_text", "");
+  const [startPoint, setStartPoint] = usePersistentState("tri_cmd_start_point", null);
+  const [destPoint, setDestPoint] = usePersistentState("tri_cmd_dest_point", null);
+
+  const applyTrip = (patch) => {
+    if ("startText" in patch) setStartText(patch.startText);
+    if ("startPoint" in patch) setStartPoint(patch.startPoint);
+    if ("destText" in patch) setDestText(patch.destText);
+    if ("destPoint" in patch) setDestPoint(patch.destPoint);
+  };
 
   const timeAgo = (iso) => {
     if (!iso) return '';
@@ -68,6 +83,8 @@ export default function PreCommandePage() {
             eta: typeof mins === 'number' ? `${mins} min` : '',
             timeAgo: timeAgo(o.completedAt || o.createdAt),
             icon: 'pin',
+            start: o.start || null,
+            destination: o.destination || null,
           };
         });
         // Ensure we only show the 3 most recent items
@@ -82,11 +99,19 @@ export default function PreCommandePage() {
     loadRecent();
   }, []);
 
-  const onSubmit = (e) => {
-    e.preventDefault();
-    const q = query.trim();
-    if (!q) return;
-    router.push(`/search?dest=${encodeURIComponent(q)}`);
+  const pickRecent = (p) => {
+    if (p.start?.lat && p.destination?.lat) {
+      applyTrip({
+        startText: p.start.name || '',
+        startPoint: { name: p.start.name, lat: p.start.lat, lon: p.start.lon },
+        destText: p.destination.name || '',
+        destPoint: { name: p.destination.name, lat: p.destination.lat, lon: p.destination.lon },
+      });
+      router.push('/commander');
+    } else {
+      applyTrip({ destText: p.title || '', destPoint: null });
+      setModalOpen(true);
+    }
   };
 
   return (
@@ -95,11 +120,8 @@ export default function PreCommandePage() {
       <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-amber-100">
         <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            {/* Logo */}
-            <svg viewBox="0 0 24 24" className="w-6 h-6 text-orange-600" fill="currentColor"><path d="M5 12a7 7 0 0 1 14 0v6a2 2 0 0 1-2 2h-3a1 1 0 0 1-1-1v-3H11v3a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2v-6Z"/></svg>
-            <span className="font-bold text-slate-800">Tricycle</span>
+            <span className="text-2xl font-black italic text-orange-600 font-inter tracking-tight">TRICYCLE</span>
           </div>
-          <button onClick={() => router.push("/")} className="text-sm text-orange-700 hover:underline">Accueil</button>
         </div>
       </div>
 
@@ -107,44 +129,36 @@ export default function PreCommandePage() {
         {/* Title */}
         <h1 className="text-xl font-semibold text-slate-800 mb-3">On va où aujourd’hui ?</h1>
 
-        {/* Destination pill */}
-        <form onSubmit={onSubmit} className="mb-5">
-          <div className="relative bg-slate-100 hover:bg-slate-50 transition rounded-2xl shadow-inner">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-              {/* Small car icon */}
-              <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor"><path d="M3 11h1l1.2-3a3 3 0 0 1 2.82-2h7.96a3 3 0 0 1 2.82 2L20 11h1a1 1 0 0 1 1 1v4a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2H7a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-4a1 1 0 0 1 1-1Zm4.5 5A1.5 1.5 0 1 0 6 14.5 1.5 1.5 0 0 0 7.5 16Zm9 0A1.5 1.5 0 1 0 15 14.5 1.5 1.5 0 0 0 16.5 16ZM7 9l.6-1.5a1 1 0 0 1 .93-.63H15.5a1 1 0 0 1 .93.63L17 9H7Z"/></svg>
-            </span>
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              onFocus={() => router.push('/commander')}
-              onClick={() => router.push('/commander')}
-              className="w-full pl-10 pr-12 py-3 rounded-2xl bg-transparent outline-none text-[15px] placeholder-slate-400"
-              placeholder="Où allons-nous ?"
-            />
-            <button
-              type="submit"
-              className="absolute right-1.5 top-1/2 -translate-y-1/2 bg-orange-600 hover:bg-orange-700 text-white rounded-2xl px-3 py-2 text-sm font-semibold"
-              aria-label="Rechercher"
-            >
-              <svg viewBox="0 0 24 24" className="w-4 h-4" fill="currentColor"><path d="m21.53 20.47-3.74-3.74a8 8 0 1 0-1.06 1.06l3.74 3.74a.75.75 0 1 0 1.06-1.06ZM4.5 11a6.5 6.5 0 1 1 13 0 6.5 6.5 0 0 1-13 0Z"/></svg>
-            </button>
-          </div>
-        </form>
+        {/* Destination pill — opens the full-screen trip search modal */}
+        <button
+          type="button"
+          onClick={() => setModalOpen(true)}
+          className="w-full mb-4 relative bg-gray-50 hover:bg-gray-100 transition rounded-2xl shadow-inner text-left"
+        >
+          <span className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400">
+            <img src="/tricycle.png" alt="Tricycle" className="w-9 h-9" />
+          </span>
+          <span className={`block w-full pl-14 pr-14 py-4 rounded-2xl text-[15px] font-semibold truncate ${destText ? 'text-slate-800' : 'text-gray-400'}`}>
+            {destText || "Où allons-nous ?"}
+          </span>
+          <span className="absolute right-1.5 top-1/2 -translate-y-1/2 bg-orange-600 text-white rounded-xl px-4 py-2 text-sm font-semibold">
+            <img src="/recherhce.svg" alt="" className="w-5 h-5" />
+          </span>
+        </button>
 
         {/* Quick tiles removed as requested */}
 
         {/* Recent destinations */}
         <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
-          <div className="px-4 py-3 border-b border-slate-100 text-sm text-slate-500">Récents</div>
+          <div className="px-4 py-3 border-b border-slate-100 text-lg font-bold text-slate-800 tracking-wide">Récents</div>
           {loading ? (
-            <div className="px-4 py-4 text-sm text-slate-500">Chargement...</div>
+            <div className="px-4 py-4 text-base font-semibold text-slate-600 tracking-wide">Chargement...</div>
           ) : recentPlaces.length === 0 ? (
-            <div className="px-4 py-4 text-sm text-slate-400">Aucune destination récente</div>
+            <div className="px-4 py-4 text-base font-bold text-slate-500 tracking-wide">Aucune destination récente</div>
           ) : (
             <ul className="divide-y divide-slate-100">
               {recentPlaces.map((p) => (
-                <li key={p.id} className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50 cursor-pointer" onClick={() => router.push(`/search?dest=${encodeURIComponent(p.title)}`)}>
+                <li key={p.id} className="px-4 py-3 flex items-center gap-3 hover:bg-slate-50 cursor-pointer" onClick={() => pickRecent(p)}>
                   <div className="shrink-0 text-slate-400">
                     {p.icon === 'pin' ? (
                       <svg viewBox="0 0 24 24" className="w-6 h-6" fill="currentColor"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7Zm0 10a3 3 0 1 1 0-6 3 3 0 0 1 0 6Z"/></svg>
@@ -169,6 +183,15 @@ export default function PreCommandePage() {
 
       {/* Bottom safe area */}
       <div className="h-8" />
+
+      {/* Full-screen trip search modal (slides up from bottom) */}
+      <TrajetSearchModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onDone={() => router.push('/commander')}
+        trip={{ startText, startPoint, destText, destPoint }}
+        onChange={applyTrip}
+      />
     </div>
   );
 }

@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useToast } from "../components/ToastProvider";
+import { colors } from "../lib/colors";
 
 export default function DashboardConducteurPage() {
   const router = useRouter();
@@ -539,8 +540,7 @@ export default function DashboardConducteurPage() {
       <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-amber-100">
         <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-2">
-            <svg className="w-6 h-6 text-orange-600" viewBox="0 0 24 24" fill="currentColor"><path d="M5 12a7 7 0 0 1 14 0v6a2 2 0 0 1-2 2h-3a1 1 0 0 1-1-1v-3H11v3a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2v-6Z"/></svg>
-            <span className="font-bold text-slate-800">Dashboard conducteur</span>
+            <span className="font-black italic text-2xl text-orange-600">TRICYCLE</span>
           </div>
           <button type="button" onClick={handleLogout} className="text-sm text-orange-700 hover:underline">Se déconnecter</button>
         </div>
@@ -581,83 +581,129 @@ export default function DashboardConducteurPage() {
             </div>
           </div>
         )}
-        {/* Disponibilité */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className={`inline-flex h-2 w-2 rounded-full ${online ? 'bg-emerald-500' : 'bg-slate-400'}`} />
-            <span className="text-sm text-slate-700">{online ? 'En ligne' : 'Hors ligne'}</span>
+        {/* Disponibilité et Revenu */}
+        <div className="space-y-3">
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className={`inline-flex h-2 w-2 rounded-full ${online ? 'bg-emerald-500' : 'bg-slate-400'}`} />
+                <span className="text-sm text-slate-700">{online ? 'En ligne' : 'Hors ligne'}</span>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOnline(true)}
+                  className={`px-3 py-1 rounded-lg text-sm font-medium ${online ? 'bg-emerald-600 text-white' : 'bg-slate-100 text-slate-700'}`}
+                  disabled={online}
+                >
+                  Online
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setOnline(false)}
+                  className={`px-3 py-1 rounded-lg text-sm font-medium ${!online ? 'bg-red-600 text-white' : 'bg-slate-100 text-slate-700'}`}
+                  disabled={!online}
+                >
+                  Offline
+                </button>
+              </div>
+            </div>
           </div>
-          <button
-            type="button"
-            onClick={() => setOnline((v) => !v)}
-            className={`px-3 py-1 rounded-lg text-sm font-medium ${online ? 'bg-slate-100 text-slate-700' : 'bg-emerald-50 text-emerald-700'}`}
-          >
-            {online ? 'Se déconnecter' : 'Se mettre en ligne'}
-          </button>
+          
+          {/* Carte de revenu */}
+          <div className="rounded-2xl shadow-sm p-4" style={{ 
+            backgroundColor: colors.secondary,
+            border: `1px solid ${colors.orange[200]}`,
+            borderRadius: '12px'
+          }}>
+            <div className="flex items-center justify-between mb-3">
+              <div className="text-xs" style={{ color: '#ffffff' }}>Revenu du jour</div>
+              <div className="w-8 h-5 rounded" style={{ 
+                background: 'linear-gradient(135deg, #ea580c 0%, #c2410c 100%)',
+                position: 'relative',
+                overflow: 'hidden'
+              }}>
+                <div className="absolute inset-0 flex items-center justify-center">
+                  <div className="w-full h-0.5" style={{ backgroundColor: '#ffffff', opacity: 0.3 }}></div>
+                </div>
+              </div>
+            </div>
+            <div className="text-center">
+              <div className="text-3xl font-bold mb-1" style={{ color: '#ffffff' }}>{stats.dayRevenue} CFA</div>
+              <div className="text-xs" style={{ color: '#ffffff' }}>
+                {stats.dayTrips} course{stats.dayTrips > 1 ? 's' : ''} aujourd'hui
+              </div>
+            </div>
+          </div>
         </div>
 
         {/* Statistiques */}
-        <div className="grid grid-cols-2 gap-3">
-          <Card>
-            <div className="text-xs text-slate-500">Trajets aujourd'hui</div>
-            <div className="text-xl font-semibold text-slate-800">{stats.dayTrips}</div>
-            <div className="text-xs text-slate-500">Revenu: {stats.dayRevenue} CFA • {dayAvg} CFA / course</div>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          <Card className="rounded-2xl shadow-sm p-4 bg-white border border-gray-300">
+            <div className="text-xs mb-2 text-gray-600">Trajets ce mois</div>
+            <div className="text-2xl font-bold mb-2 text-gray-800">{stats.monthTrips}</div>
+            <div className="text-sm text-gray-700">Revenu: {stats.monthRevenue} CFA</div>
           </Card>
-          <Card>
-            <div className="text-xs text-slate-500">Trajets ce mois</div>
-            <div className="text-xl font-semibold text-slate-800">{stats.monthTrips}</div>
-            <div className="text-xs text-slate-500">Revenu: {stats.monthRevenue} CFA</div>
-          </Card>
-          <Card>
-            <div className="text-xs text-slate-500">Taux d’acceptation</div>
-            <div className="text-xl font-semibold text-slate-800">{stats.acceptRate}%</div>
-            <div className="mt-2 w-full bg-slate-100 rounded-full h-2 overflow-hidden">
-              <div className="bg-orange-500 h-2" style={{ width: `${stats.acceptRate}%` }} />
+          <Card className="rounded-2xl shadow-sm p-4 bg-white border border-gray-300">
+            <div className="text-xs mb-2 text-gray-600">Taux d'acceptation</div>
+            <div className="text-2xl font-bold mb-3 text-gray-800">{stats.acceptRate}%</div>
+            <div className="w-full bg-gray-100 rounded-full h-3 overflow-hidden">
+              <div className="h-3 bg-gray-400" style={{ width: `${stats.acceptRate}%` }} />
             </div>
           </Card>
-          <Card>
-            <div className="text-xs text-slate-500">État</div>
-            <div className="text-xl font-semibold text-slate-800">{online ? 'Disponible' : 'Indisponible'}</div>
-            <div className="text-xs text-slate-500">Activez-vous pour recevoir des demandes</div>
+          <Card className="rounded-2xl shadow-sm p-4 bg-white border border-gray-300">
+            <div className="text-xs mb-2 text-gray-600">État</div>
+            <div className="text-2xl font-bold mb-2 text-gray-800">{online ? 'Disponible' : 'Hors ligne'}</div>
+            <div className="text-sm text-gray-700">{online ? 'Prêt à recevoir des demandes' : 'Connectez-vous pour recevoir des demandes'}</div>
           </Card>
         </div>
 
         {/* File des demandes */}
-        <section className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
+        <section className="rounded-2xl shadow-sm p-3" style={{ backgroundColor: colors.primary, border: `1px solid ${colors.gray[300]}` }}>
           <div className="flex items-center justify-between mb-2">
-            <div className="text-sm font-semibold text-slate-800">Demandes en temps réel</div>
-            <span className="text-xs text-slate-500">{online ? 'Actif' : 'Inactif'}</span>
+            <div className="text-sm font-semibold" style={{ color: '#ffffff' }}>Demandes en temps réel</div>
+            <span className="text-xs" style={{ color: colors.gray[400] }}>{online ? 'Actif' : 'Inactif'}</span>
           </div>
-          {error && <div className="text-xs text-red-600 mb-2">{error}</div>}
+          {error && <div className="text-xs mb-2" style={{ color: '#ef4444' }}>{error}</div>}
           {queue.length === 0 ? (
-            <div className="text-sm text-slate-500 py-6 text-center">{online ? 'En attente de demandes…' : 'Mettez-vous en ligne pour recevoir des demandes.'}</div>
+            <div className="text-sm py-6 text-center" style={{ color: colors.gray[500] }}>{online ? 'En attente de demandes…' : 'Mettez-vous en ligne pour recevoir des demandes.'}</div>
           ) : (
             <ul className="space-y-2">
               {queue.map((r) => (
-                <li key={r.id} className="border border-slate-200 rounded-xl p-3">
+                <li key={r.id} className="rounded-xl p-3" style={{ backgroundColor: '#ffffff', border: `1px solid ${colors.gray[200]}` }}>
                   <div className="flex items-center justify-between">
                     <div>
-                      <div className="text-sm font-medium text-slate-800">{r?.start?.name || 'Départ'} → {r?.destination?.name || 'Arrivée'}</div>
-                      <div className="text-xs text-slate-500">{r?.start?.lat},{r?.start?.lon} → {r?.destination?.lat},{r?.destination?.lon}</div>
-                      <div className="mt-1 text-xs text-slate-600">
+                      <div className="text-sm font-medium" style={{ color: colors.primary }}>{r?.start?.name || 'Départ'} → {r?.destination?.name || 'Arrivée'}</div>
+                      <div className="text-xs" style={{ color: colors.gray[500] }}>{r?.start?.lat},{r?.start?.lon} → {r?.destination?.lat},{r?.destination?.lon}</div>
+                      <div className="mt-1 text-xs" style={{ color: colors.gray[600] }}>
                         <span className="mr-2">Pax: <span className="font-medium">{r?.passengers ?? '—'}</span></span>
                         <span className="mr-2">Bagages: <span className="font-medium">{r?.bags ?? 0}</span></span>
                         {typeof r?.bagOffer === 'number' && r?.bagOffer > 0 && (
-                          <span className="mr-2">Offre bagages: <span className="font-medium">{r.bagOffer} CFA</span></span>
+                          <span className="mr-2">Offre bagages: <span className="font-medium" style={{ color: colors.accent }}>{r.bagOffer} CFA</span></span>
                         )}
                       </div>
                       {r?.bagDescription ? (
-                        <div className="text-xs text-slate-500">Description: {r.bagDescription}</div>
+                        <div className="text-xs" style={{ color: colors.gray[500] }}>Description: {r.bagDescription}</div>
                       ) : null}
                     </div>
-                    <div className="text-right">
-                      <div className="text-sm font-semibold text-slate-900">{r.priceEstimate ? `${r.priceEstimate} CFA` : '—'}</div>
-                      <div className="text-xs text-slate-500">créée: {new Date(r.createdAt).toLocaleTimeString()}</div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => accept(r.id)}
+                        className="px-3 py-1 rounded-lg text-sm font-medium"
+                        style={{ backgroundColor: colors.success, color: '#ffffff' }}
+                      >
+                        Accepter
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => refuse(r.id)}
+                        className="px-3 py-1 rounded-lg text-sm font-medium"
+                        style={{ backgroundColor: colors.gray[200], color: colors.gray[700] }}
+                      >
+                        Refuser
+                      </button>
                     </div>
-                  </div>
-                  <div className="mt-2 grid grid-cols-2 gap-2 text-sm">
-                    <button type="button" onClick={() => accept(r.id)} className="bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-lg py-2">Accepter</button>
-                    <button type="button" onClick={() => refuse(r.id)} className="bg-white border border-slate-200 hover:bg-slate-50 text-slate-700 rounded-lg py-2">Refuser</button>
                   </div>
                 </li>
               ))}

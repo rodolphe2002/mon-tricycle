@@ -6,6 +6,8 @@ import { useRouter } from 'next/navigation';
 export default function Home() {
   const [isLoaded, setIsLoaded] = useState(false);
   const [lastRoute, setLastRoute] = useState(null);
+  // true while the session is being checked (or a redirect is in flight)
+  const [checking, setChecking] = useState(true);
   const router = useRouter();
 
   useEffect(() => {
@@ -31,8 +33,20 @@ export default function Home() {
         try { const obj = JSON.parse(lr); if (obj?.href) setLastRoute(obj.href); } catch {}
       }
     } catch {}
+    setChecking(false);
     setIsLoaded(true);
   }, [router]);
+
+  // Splash screen while the session is checked / a redirect is in flight:
+  // TRICYCLE + tricycle image, centered on the brand gradient.
+  if (checking) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-orange-400 via-orange-500 to-amber-400 flex flex-col items-center justify-center p-6">
+        <img src="/tricycle.png" alt="Tricycle" className="w-40 h-40 object-contain mb-6" />
+        <h1 className="text-5xl font-black italic text-center text-white font-inter tracking-tight">TRICYCLE</h1>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -47,70 +61,29 @@ export default function Home() {
         <main className="z-10 w-full max-w-md flex flex-col items-center justify-center">
           {/* Header avec logo animé */}
           <header className={`transition-all duration-1000 ${isLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-8'}`}>
-            <div className="flex justify-center mb-2">
-              <svg 
-                className="w-20 h-20 drop-shadow-lg" 
-                viewBox="0 0 100 100" 
-                fill="none" 
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                <circle cx="25" cy="75" r="8" fill="white" className="animate-roll" />
-                <circle cx="65" cy="75" r="8" fill="white" className="animate-roll" />
-                <path d="M30 50L60 35C65 32 70 35 70 40V60C70 65 65 68 60 65L40 55" stroke="white" strokeWidth="4" className="animate-draw" />
-                <circle cx="40" cy="40" r="10" fill="none" stroke="white" strokeWidth="4" className="animate-pulse" />
-              </svg>
-            </div>
-            <h1 className="text-4xl font-bold text-center text-white mb-1 font-inter tracking-tight">Tricycle</h1>
+            <h1 className="text-6xl font-black italic text-center text-white mb-1 font-inter tracking-tight">TRICYCLE</h1>
             <p className="text-lg text-center text-white/90 font-light mb-10 font-inter">Votre tricycle, en quelques minutes.</p>
           </header>
 
-          {/* Illustration hero avec animation */}
+          {/* Image tricycle */}
           <div className={`relative w-full h-64 mb-10 transition-all duration-1000 delay-300 ${isLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
             <div className="absolute inset-0 flex items-center justify-center">
-              <svg 
-                className="w-full h-full" 
-                viewBox="0 0 400 300" 
-                fill="none" 
-                xmlns="http://www.w3.org/2000/svg"
-              >
-                {/* Route */}
-                <path d="M0 220H400" stroke="url(#roadGradient)" strokeWidth="10" strokeLinecap="round" strokeDasharray="1 20" className="animate-road" />
-                
-                {/* Tricycle stylisé */}
-                <g className="animate-bounce-slight">
-                  <circle cx="150" cy="200" r="20" fill="white" stroke="#FF8C00" strokeWidth="3" />
-                  <circle cx="250" cy="200" r="20" fill="white" stroke="#FF8C00" strokeWidth="3" />
-                  <circle cx="100" cy="200" r="15" fill="white" stroke="#FF8C00" strokeWidth="3" />
-                  
-                  <path d="M120 180L160 150C170 145 180 150 180 160V180C180 190 170 195 160 190L140 180" stroke="white" strokeWidth="6" strokeLinecap="round" />
-                  
-                  <rect x="160" y="160" width="40" height="20" rx="5" fill="white" stroke="#FF8C00" strokeWidth="2" />
-                  
-                  <circle cx="100" cy="200" r="5" fill="#FF8C00" />
-                  <circle cx="150" cy="200" r="5" fill="#FF8C00" />
-                  <circle cx="250" cy="200" r="5" fill="#FF8C00" />
-                </g>
-                
-                {/* Dégradé pour la route */}
-                <defs>
-                  <linearGradient id="roadGradient" x1="0%" y1="0%" x2="100%" y2="0%">
-                    <stop offset="0%" stopColor="#FFFFFF" stopOpacity="0.2" />
-                    <stop offset="50%" stopColor="#FFFFFF" stopOpacity="0.5" />
-                    <stop offset="100%" stopColor="#FFFFFF" stopOpacity="0.2" />
-                  </linearGradient>
-                </defs>
-              </svg>
+              <img 
+                src="/tricycle.png" 
+                alt="Tricycle" 
+                className="w-full h-full object-contain"
+              />
             </div>
           </div>
 
           {/* Boutons CTA avec animations */}
           <div className={`w-full space-y-4 transition-all duration-1000 delay-500 ${isLoaded ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-10'}`}>
             {lastRoute && (
-              <button onClick={() => router.push(lastRoute)} className="w-full bg-black/20 border-2 border-white/30 text-white py-5 px-6 rounded-[50px] text-lg font-semibold shadow-lg hover:shadow-xl transform transition-all duration-300 hover:scale-105 active:scale-95 flex items-center justify-center gap-2">
+              <button onClick={() => router.push(lastRoute)} className="w-full bg-black/20 border-2 border-white/30 text-white py-5 px-6 rounded-xl text-lg font-semibold shadow-lg hover:shadow-xl transform transition-all duration-300 hover:scale-105 active:scale-95 flex items-center justify-center gap-2">
                 Continuer où j'en étais
               </button>
             )}
-            <button onClick={() => router.push('/signup')} className="w-full bg-white text-orange-600 py-5 px-6 rounded-[50px] text-lg font-semibold shadow-lg hover:shadow-xl transform transition-all duration-300 hover:scale-105 active:scale-95 flex items-center justify-center gap-2 group">
+            <button onClick={() => router.push('/signup')} className="w-full bg-white text-orange-600 py-5 px-6 rounded-xl text-lg font-semibold shadow-lg hover:shadow-xl transform transition-all duration-300 hover:scale-105 active:scale-95 flex items-center justify-center gap-2 group">
               <span>Créer un compte</span>
               <svg className="w-5 h-5 group-hover:translate-x-1 transition-transform" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7l5 5m0 0l-5 5m5-5H6" />

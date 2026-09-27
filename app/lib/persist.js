@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 export function safeGet(key, fallback = null) {
   try {
@@ -18,19 +18,33 @@ export function safeSet(key, value) {
 }
 
 export function usePersistentState(key, initialValue) {
-  const [state, setState] = useState(() => {
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw === null || raw === undefined) return initialValue;
-      return JSON.parse(raw);
-    } catch {
-      return initialValue;
-    }
-  });
+  // SSR-safe: first render matches the server (initialValue), persisted
+  // value is loaded after mount to avoid hydration mismatches.
+  const [state, setState] = useState(initialValue);
+  const stateRef = useRef(initialValue);
+
   useEffect(() => {
     try {
-      localStorage.setItem(key, JSON.stringify(state));
+      const raw = localStorage.getItem(key);
+      if (raw !== null && raw !== undefined) {
+        const v = JSON.parse(raw);
+        stateRef.current = v;
+        setState(v);
+      }
     } catch {}
-  }, [key, state]);
-  return [state, setState];
+  }, [key]);
+
+  // The setter writes to localStorage synchronously: callers often navigate
+  // away right after updating (e.g. trip selection -> /commander), and a
+  // passive useEffect write can be skipped when the page unmounts.
+  const set = useCallback((v) => {
+    const next = typeof v === "function" ? v(stateRef.current) : v;
+    stateRef.current = next;
+    try {
+      localStorage.setItem(key, JSON.stringify(next));
+    } catch {}
+    setState(next);
+  }, [key]);
+
+  return [state, set];
 }

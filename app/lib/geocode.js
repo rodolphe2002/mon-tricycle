@@ -22,6 +22,9 @@ export async function geocodeSearch(query, { limit = 5, country = "ci", lang = "
     lat: parseFloat(it.lat),
     lon: parseFloat(it.lon),
     source: it.source || "nominatim",
+    category: it.category || null,
+    type: it.type || null,
+    address: it.address || null,
   }));
   cache.set(key, results);
   return results;

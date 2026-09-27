@@ -164,3 +164,8 @@ h1, h2, h3 {
 .flat-ui textarea::placeholder {
   color: #64748b; /* slate-500 */
 }
+
+/* Smooth live movement for the vehicle marker on /trajet-en-cours */
+.leaflet-marker-icon.tricycle-driver-marker {
+  transition: transform 0.9s linear;
+}

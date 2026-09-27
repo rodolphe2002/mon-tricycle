@@ -10,7 +10,7 @@ const ENDPOINTS = [
 ];
 
 // Post a query with retries and a client-side timeout using AbortController
-async function postOverpassWithRetries(query, { retries = 2, timeoutMs = 20000 } = {}) {
+async function postOverpassWithRetries(query, { retries = 2, timeoutMs = 25000 } = {}) {
   const body = new URLSearchParams({ data: query });
   let lastErr;
 
@@ -25,6 +25,7 @@ async function postOverpassWithRetries(query, { retries = 2, timeoutMs = 20000 }
         headers: { "Content-Type": "application/x-www-form-urlencoded" },
         body,
         signal: ac.signal,
+        mode: 'cors',
       });
       clearTimeout(t);
       if (!res.ok) {
@@ -40,10 +41,20 @@ async function postOverpassWithRetries(query, { retries = 2, timeoutMs = 20000 }
     } catch (err) {
       clearTimeout(t);
       lastErr = err;
+      // If it's a CORS error, try next endpoint immediately
+      if (err.message && err.message.includes('CORS')) {
+        continue;
+      }
     }
-    // Exponential backoff between attempts
-    const backoff = 400 * Math.pow(2, attempt);
-    await new Promise((r) => setTimeout(r, backoff));
+    // Exponential backoff between attempts (longer for 429 errors)
+    const baseBackoff = lastErr?.message?.includes('429') ? 1000 : 400;
+    const backoff = baseBackoff * Math.pow(2, attempt);
+    await new Promise((r) => setTimeout(r, Math.min(backoff, 8000)));
+  }
+  // Silently handle CORS and rate limiting errors - they're expected
+  if (lastErr?.message?.includes('CORS') || lastErr?.message?.includes('429')) {
+    // Don't log CORS/429 errors to reduce console spam
+    return null;
   }
   if (!(typeof navigator !== "undefined" && navigator.onLine === false)) {
     console.warn("Overpass request failed after retries", lastErr?.message || lastErr);

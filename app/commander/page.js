@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { quartiers as BUYO_QUARTIERS, distances as BUYO_DIST } from "../lib/buyoData";
-import { geocodeSearch } from "../lib/geocode";
-import { fetchBuyoPlaces, fetchHealthPOIs, fetchTransportPOIs, fetchSportsPOIs } from "../lib/overpass";
+import { fetchRoute } from "../lib/routing";
+import TrajetSearchModal from "../components/TrajetSearchModal";
+import RideBottomSheet from "../components/RideBottomSheet";
 import { usePersistentState } from "../lib/persist";
 import { useToast } from "../components/ToastProvider";
 
@@ -23,11 +24,6 @@ function haversineKm(a, b) {
   return 2 * R * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
-// Build datasets from shared Buyo data
-const PLACES = BUYO_QUARTIERS.map((q) => ({ name: q.name, lat: q.coords[0], lon: q.coords[1] }));
-
-const QUARTIERS = PLACES;
-
 export default function CommanderTrajetPage() {
   const router = useRouter();
   const toast = useToast();
@@ -37,88 +33,11 @@ export default function CommanderTrajetPage() {
   const [startPoint, setStartPoint] = usePersistentState("tri_cmd_start_point", null); // {name, lat, lon}
   const [destPoint, setDestPoint] = usePersistentState("tri_cmd_dest_point", null);
 
-  const [showStartSuggest, setShowStartSuggest] = useState(false);
-  const [showDestSuggest, setShowDestSuggest] = useState(false);
-  const hideBelow = showStartSuggest || showDestSuggest;
-
-  // Remote suggestions from Nominatim (debounced)
-  const [startRemote, setStartRemote] = useState([]);
-  const [destRemote, setDestRemote] = useState([]);
-
-  // Overpass places (fetched once, merged after our Buyo quartiers)
-  const [overpassPlaces, setOverpassPlaces] = useState([]);
-  useEffect(() => {
-    let mounted = true;
-    (async () => {
-      try {
-        const center = BUYO_QUARTIERS[0]?.coords || [6.2718, -6.9943];
-        const dLat = 0.07; // ~7.7 km
-        const dLon = 0.07; // ~7.7 km (approx)
-        const bbox = { south: center[0] - dLat, west: center[1] - dLon, north: center[0] + dLat, east: center[1] + dLon };
-        const [placesRes, healthRes, transportRes, sportsRes] = await Promise.all([
-          fetchBuyoPlaces({ bbox }),
-          fetchHealthPOIs({ bbox }),
-          fetchTransportPOIs({ bbox }),
-          fetchSportsPOIs({ bbox }),
-        ]);
-        const all = [
-          ...(placesRes || []),
-          ...(healthRes || []),
-          ...(transportRes || []),
-          ...(sportsRes || []),
-        ];
-        // Normalize & dedupe by normalized name
-        const seen = new Set();
-        const norm = [];
-        for (const p of all) {
-          const n = (p?.name || "").trim().toLowerCase();
-          if (!n || seen.has(n)) continue;
-          seen.add(n);
-          norm.push({ name: p.name, lat: p.lat, lon: p.lon });
-        }
-        // Static fallback POIs to always include
-        const fallbackPOIs = [
-          { name: "Nouvelle pharmacie de la cité", lat: 6.2497885, lon: -7.0095977 },
-          { name: "MARCHE DE POISSONS FRAIS DE BUYO", lat: 6.2504168, lon: -7.0070812 },
-          { name: "Pharmacie la colombe", lat: 6.2509553, lon: -7.0043959 },
-          { name: "Coopec", lat: 6.2503637, lon: -7.0066859 },
-          { name: "Maquis Zenith", lat: 6.2500036, lon: -7.0053988 },
-          { name: "Petro ivoire", lat: 6.2501545, lon: -7.0051289 },
-          { name: "Cité CIE", lat: 6.2472010, lon: -7.0159986 },
-          { name: "Hotel de la Cité CIE", lat: 6.2489965, lon: -7.0148988 },
-          { name: "Restaurant du Club CIE", lat: 6.2483640, lon: -7.0153962 },
-          { name: "Château d'eau", lat: 6.2496993, lon: -7.0123948 },
-          { name: "Eglise methodiste unie", lat: 6.2493330, lon: -7.0120985 },
-          { name: "Église évangélique Reveil de Côte d'Ivoire de Buyo", lat: 6.2523922, lon: -7.0049618 },
-          { name: "EPP Buyo barrage", lat: 6.2518357, lon: -7.0038367 },
-          { name: "Tchemansso", lat: 6.2591966, lon: -6.9969439 },
-          { name: "College saint andre de buyo", lat: 6.2569511, lon: -6.9990182 },
-          { name: "Belleville", lat: 6.2445363, lon: -7.0011871 },
-          { name: "Boulangerie", lat: 6.2528853, lon: -7.0031654 },
-          { name: "Église évangélique Assemblée de Dieu buyo", lat: 6.2554396, lon: -7.0028642 },
-          { name: "Église CMA", lat: 6.2539057, lon: -7.0023764 },
-          { name: "Gare issia", lat: 6.2537068, lon: -7.0033678 },
-          { name: "CIE Arrondissement de Buyo", lat: 6.2460962, lon: -7.0163914 },
-          { name: "Hôtel de ville de buyo", lat: 6.2764805, lon: -6.9952467 },
-          { name: "Trésorerie", lat: 6.2754220, lon: -6.9962701 },
-          { name: "Buyo Lac", lat: 6.2541005, lon: -7.0059332 },
-          { name: "Buyo Cité", lat: 6.2470336, lon: -7.0074645 },
-          { name: "Djinansso", lat: 6.2794410, lon: -6.9903528 },
-        ];
-        for (const f of fallbackPOIs) {
-          const k = (f.name || "").trim().toLowerCase();
-          if (k && !seen.has(k)) {
-            seen.add(k);
-            norm.push(f);
-          }
-        }
-        if (mounted) setOverpassPlaces(norm);
-      } catch {
-        if (mounted) setOverpassPlaces([]);
-      }
-    })();
-    return () => { mounted = false; };
-  }, []);
+  // Full-screen trip search modal (shared with /pre-commande)
+  const [modalOpen, setModalOpen] = useState(false);
+  // Bumps when the Leaflet map finishes initializing so effects depending on
+  // mapRef/LRef re-run even if their other deps were already set.
+  const [mapReady, setMapReady] = useState(false);
 
   // Observe container size changes and refresh map
   useEffect(() => {
@@ -136,111 +55,11 @@ export default function CommanderTrajetPage() {
     };
   }, []);
 
-  // Markers effect moved below after LOCAL_PLACES declaration
-
-  // Merge local Buyo quartiers with Overpass results (Buyo first), dedup by name
-  const LOCAL_PLACES = useMemo(() => {
-    const norm = (s) => (s || "").trim().toLowerCase();
-    const seen = new Set();
-    const list = [];
-    for (const p of PLACES) { const k = norm(p.name); if (!seen.has(k)) { seen.add(k); list.push(p); } }
-    for (const p of overpassPlaces) { const k = norm(p.name); if (!seen.has(k)) { seen.add(k); list.push(p); } }
-    return list;
-  }, [overpassPlaces]);
-
-  // Rebuild markers for all LOCAL_PLACES (quartiers + Overpass POIs)
-  useEffect(() => {
-    const map = mapRef.current;
-    const L = LRef.current;
-    if (!map || !L) return;
-    // Clear existing markers
-    if (layersRef.current.quartierMarkers && layersRef.current.quartierMarkers.length) {
-      for (const m of layersRef.current.quartierMarkers) {
-        try { m.remove(); } catch {}
-      }
-      layersRef.current.quartierMarkers = [];
-    }
-    // Build new markers
-    const markers = (LOCAL_PLACES || []).map((q) => {
-      const m = L.marker([q.lat, q.lon]).addTo(map).bindPopup(q.name);
-      m.on("click", () => {
-        if (!startPoint) {
-          setStartPoint(q);
-          setStartText(q.name);
-        } else if (!destPoint) {
-          setDestPoint(q);
-          setDestText(q.name);
-        } else {
-          setStartPoint(q);
-          setStartText(q.name);
-          setDestPoint(null);
-          setDestText("");
-        }
-      });
-      return m;
-    });
-    layersRef.current.quartierMarkers = markers;
-  }, [LOCAL_PLACES, startPoint, destPoint]);
-
-  // Normalize helper for dedupe
-  const normName = (s) => (s || "").trim().toLowerCase();
-
-  // Debounced fetch for start
-  useEffect(() => {
-    const q = startText.trim();
-    if (!q || q.length < 2) { setStartRemote([]); return; }
-    const ctrl = new AbortController();
-    const t = setTimeout(async () => {
-      try {
-        const res = await geocodeSearch(q, { limit: 5, country: "ci", lang: "fr" });
-        if (!ctrl.signal.aborted) setStartRemote(res);
-      } catch {
-        if (!ctrl.signal.aborted) setStartRemote([]);
-      }
-    }, 350);
-    return () => { ctrl.abort(); clearTimeout(t); };
-  }, [startText]);
-
-  // Debounced fetch for dest
-  useEffect(() => {
-    const q = destText.trim();
-    if (!q || q.length < 2) { setDestRemote([]); return; }
-    const ctrl = new AbortController();
-    const t = setTimeout(async () => {
-      try {
-        const res = await geocodeSearch(q, { limit: 5, country: "ci", lang: "fr" });
-        if (!ctrl.signal.aborted) setDestRemote(res);
-      } catch {
-        if (!ctrl.signal.aborted) setDestRemote([]);
-      }
-    }, 350);
-    return () => { ctrl.abort(); clearTimeout(t); };
-  }, [destText]);
-
   const [options, setOptions] = usePersistentState("tri_cmd_options", { promo: "", pax: 1, bags: 0, accessible: false });
-  // Passengers input as free-typed string; validated on blur/Enter
-  const [paxInput, setPaxInput] = useState(String((Number((typeof options?.pax !== 'undefined' ? options.pax : 1)) || 1)));
-  useEffect(() => {
-    // Keep input in sync if pax changes elsewhere
-    const current = String(Number(options.pax) || 1);
-    if (paxInput !== current) setPaxInput(current);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [options.pax]);
-  const validatePax = () => {
-    const n = Number(paxInput);
-    let next = Number.isFinite(n) ? n : 1;
-    let msg = '';
-    if (next < 1) { next = 1; msg = "Désolé, il faut au minimum un passager pour passer une commande."; }
-    if (next > 6) { next = 6; msg = "Désolé, nos tricycles ne peuvent contenir que 6 personnes maximum."; }
-    setOptions((o) => ({ ...o, pax: next }));
-    setPaxInput(String(next));
-    if (msg) toast.error(msg);
-  };
   // Extend options with baggage offer and description
   useEffect(() => {
     // migrate persisted state if missing new fields
     setOptions((o) => ({ bagOffer: 0, bagDesc: "", ...o }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   // Toggle to reveal baggage detail fields only when needed
   const [showBagDetails, setShowBagDetails] = useState(false);
@@ -249,8 +68,7 @@ export default function CommanderTrajetPage() {
     if ((Number(options.bagOffer) || 0) > 0 || (options.bagDesc || "").trim().length > 0) {
       setShowBagDetails(true);
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [options.bagOffer, options.bagDesc]);
   // Clear baggage fields if bags set to 0
   useEffect(() => {
     if ((Number(options.bags) || 0) === 0) {
@@ -267,9 +85,29 @@ export default function CommanderTrajetPage() {
   // Leaflet map refs
   const mapContainerRef = useRef(null);
   const mapRef = useRef(null);
-  const layersRef = useRef({ base: null, route: null, start: null, dest: null, quartierMarkers: [] });
+  const layersRef = useRef({ base: null, route: null, routeLabels: null, start: null, dest: null });
   const LRef = useRef(null); // Leaflet module once loaded
-  const IconRef = useRef(null); // Default marker icon once created
+
+  // Trip patch shared with TrajetSearchModal
+  const applyTrip = (patch) => {
+    if ("startText" in patch) setStartText(patch.startText);
+    if ("startPoint" in patch) setStartPoint(patch.startPoint);
+    if ("destText" in patch) setDestText(patch.destText);
+    if ("destPoint" in patch) setDestPoint(patch.destPoint);
+  };
+
+  // Bottom sheet metrics (positions the floating locate button above the sheet)
+  const [sheetH, setSheetH] = useState(null); // px; null -> default 55%
+  const [sheetDragging, setSheetDragging] = useState(false);
+  const onSheetHeight = useCallback((h, d) => { setSheetH(h); setSheetDragging(d); }, []);
+
+  // Fit map bounds with room for the floating bar (top) and the bottom sheet
+  const fitTripBounds = (bounds) => {
+    const map = mapRef.current;
+    if (!map || !bounds) return;
+    const bottomPad = typeof window !== "undefined" ? Math.round(window.innerHeight * 0.55) : 300;
+    try { map.fitBounds(bounds, { paddingTopLeft: [24, 90], paddingBottomRight: [24, bottomPad] }); } catch {}
+  };
 
   // Helper to ensure map renders correctly after UI interactions
   const ensureMapVisible = () => {
@@ -288,13 +126,23 @@ export default function CommanderTrajetPage() {
           L.latLng(startPoint.lat, startPoint.lon),
           L.latLng(destPoint.lat, destPoint.lon)
         );
-        map.fitBounds(bounds, { padding: [30, 30] });
+        fitTripBounds(bounds);
       } else {
         // nudge to trigger tile draw
         map.panBy([0, 0], { animate: false });
       }
     } catch {}
   };
+
+  // Auto-open the trip picker once if the trip is incomplete
+  const autoOpenedRef = useRef(false);
+  useEffect(() => {
+    if (!isHydrated || autoOpenedRef.current) return;
+    if (!startPoint || !destPoint) {
+      autoOpenedRef.current = true;
+      setModalOpen(true);
+    }
+  }, [isHydrated, startPoint, destPoint]);
 
   // Try browser geolocation for start point
   const geoSupported = typeof navigator !== "undefined" && "geolocation" in navigator;
@@ -311,46 +159,6 @@ export default function CommanderTrajetPage() {
     );
   };
 
-  // Filter suggestions
-  const startSuggestions = useMemo(() => {
-    const q = startText.trim().toLowerCase();
-    const local = q ? LOCAL_PLACES.filter((p) => p.name.toLowerCase().includes(q)) : LOCAL_PLACES.slice(0, 6);
-    // Merge remote (without duplicate names, normalized)
-    const seen = new Set(local.map((p) => normName(p.name)));
-    const remoteNorm = (startRemote || []).filter((r) => r.lat && r.lon && !seen.has(normName(r.name)));
-    const merged = [...local, ...remoteNorm].slice(0, 8);
-    return merged;
-  }, [startText, startRemote, LOCAL_PLACES]);
-
-  const destSuggestions = useMemo(() => {
-    const q = destText.trim().toLowerCase();
-    const local = q ? LOCAL_PLACES.filter((p) => p.name.toLowerCase().includes(q)) : LOCAL_PLACES.slice(0, 6);
-    const seen = new Set(local.map((p) => normName(p.name)));
-    const remoteNorm = (destRemote || []).filter((r) => r.lat && r.lon && !seen.has(normName(r.name)));
-    const merged = [...local, ...remoteNorm].slice(0, 8);
-    return merged;
-  }, [destText, destRemote, LOCAL_PLACES]);
-
-  // Close suggestion lists when clicking outside
-  const startBoxRef = useRef(null);
-  const destBoxRef = useRef(null);
-  const startInputRef = useRef(null);
-  const destInputRef = useRef(null);
-  useEffect(() => {
-    function onDocDown(e) {
-      const sIn = startBoxRef.current && startBoxRef.current.contains(e.target);
-      const dIn = destBoxRef.current && destBoxRef.current.contains(e.target);
-      if (!sIn) setShowStartSuggest(false);
-      if (!dIn) setShowDestSuggest(false);
-    }
-    document.addEventListener("mousedown", onDocDown);
-    document.addEventListener("touchstart", onDocDown, { passive: true });
-    return () => {
-      document.removeEventListener("mousedown", onDocDown);
-      document.removeEventListener("touchstart", onDocDown);
-    };
-  }, []);
-
   const distanceKm = useMemo(() => {
     if (!startPoint || !destPoint) return 0;
     const a = startPoint.name;
@@ -361,13 +169,6 @@ export default function CommanderTrajetPage() {
     }
     return haversineKm(startPoint, destPoint);
   }, [startPoint, destPoint]);
-
-  // Ensure map redraw after layout changes (e.g., suggestion panels open/close)
-  useEffect(() => {
-    // Delay a bit to let DOM layout settle
-    const t = setTimeout(() => { try { ensureMapVisible(); } catch {} }, 100);
-    return () => clearTimeout(t);
-  }, [showStartSuggest, showDestSuggest, startText, destText]);
 
   // Invalidate on window resize/orientation changes
   useEffect(() => {
@@ -383,6 +184,11 @@ export default function CommanderTrajetPage() {
   }, []);
   const avgSpeedKmh = 22; // assume average 22 km/h in city
   const durationMin = isHydrated && distanceKm ? Math.max(3, Math.round((distanceKm / avgSpeedKmh) * 60)) : 0;
+
+  // Real road route (OSRM) — falls back to straight line if unavailable
+  const [route, setRoute] = useState(null); // {coordinates, distanceKm, durationMin, fallback}
+  const displayKm = route?.distanceKm ?? distanceKm;
+  const displayMin = route?.durationMin ?? durationMin;
 
   // Pricing: 200 F par passager + offre bagages
   const baseOk = isHydrated && startPoint && destPoint && startPoint.name !== destPoint.name;
@@ -401,23 +207,9 @@ export default function CommanderTrajetPage() {
       if (!mounted) return;
       LRef.current = L;
 
-      // Configure default Leaflet marker icons (avoid 404s in Next.js)
-      const DefaultIcon = L.icon({
-        iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-        iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
-        shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-        iconSize: [25, 41],
-        iconAnchor: [12, 41],
-        popupAnchor: [1, -34],
-        tooltipAnchor: [16, -28],
-        shadowSize: [41, 41],
-      });
-      L.Marker.prototype.options.icon = DefaultIcon;
-      IconRef.current = DefaultIcon;
-
       // Center near Buyo (first quartier from dataset)
       const center = BUYO_QUARTIERS[0]?.coords || [6.2718, -6.9943];
-      const map = L.map(mapContainerRef.current).setView(center, 14);
+      const map = L.map(mapContainerRef.current, { zoomControl: false }).setView(center, 14);
       const base = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
         maxZoom: 19,
         attribution: "&copy; OpenStreetMap contributors",
@@ -430,30 +222,9 @@ export default function CommanderTrajetPage() {
         try { map.invalidateSize(false); } catch {}
       });
 
-      // Add quartier markers
-      const markers = QUARTIERS.map((q) => {
-        const m = L.marker([q.lat, q.lon]).addTo(map).bindPopup(q.name);
-        m.on("click", () => {
-          if (!startPoint) {
-            setStartPoint({ name: q.name, lat: q.lat, lon: q.lon });
-            setStartText(q.name);
-          } else if (!destPoint) {
-            setDestPoint({ name: q.name, lat: q.lat, lon: q.lon });
-            setDestText(q.name);
-          } else {
-            // Reset cycle: start <- clicked, dest cleared
-            setStartPoint({ name: q.name, lat: q.lat, lon: q.lon });
-            setStartText(q.name);
-            setDestPoint(null);
-            setDestText("");
-          }
-        });
-        return m;
-      });
-
-      layersRef.current.quartierMarkers = markers;
       mapRef.current = map;
       layersRef.current.base = base;
+      setMapReady(true);
 
       // Ensure tiles render after first mount
       setTimeout(() => {
@@ -468,16 +239,26 @@ export default function CommanderTrajetPage() {
   useEffect(() => {
     const map = mapRef.current;
     const L = LRef.current;
-    const DefaultIcon = IconRef.current;
     if (!map || !L) return;
+
+    // Compact endpoint pins: white circle, thick dark border, modal icon inside
+    const pinIcon = (src, alt) =>
+      L.divIcon({
+        className: "",
+        iconSize: [30, 30],
+        iconAnchor: [15, 15],
+        popupAnchor: [0, -14],
+        tooltipAnchor: [0, -14],
+        html: `<div style="width:30px;height:30px;border-radius:9999px;background:#fff;border:4px solid #1f2937;box-shadow:0 1px 5px rgba(15,23,42,.35);display:flex;align-items:center;justify-content:center"><img src="${src}" alt="${alt}" style="width:15px;height:15px;display:block" /></div>`,
+      });
 
     // Start marker
     if (layersRef.current.start) {
       layersRef.current.start.remove();
       layersRef.current.start = null;
     }
-    if (startPoint && DefaultIcon) {
-      layersRef.current.start = L.marker([startPoint.lat, startPoint.lon], { icon: DefaultIcon }).addTo(map).bindTooltip("Départ");
+    if (startPoint) {
+      layersRef.current.start = L.marker([startPoint.lat, startPoint.lon], { icon: pinIcon("/depart.png", "Départ") }).addTo(map).bindTooltip("Départ");
     }
 
     // Dest marker
@@ -485,8 +266,8 @@ export default function CommanderTrajetPage() {
       layersRef.current.dest.remove();
       layersRef.current.dest = null;
     }
-    if (destPoint && DefaultIcon) {
-      layersRef.current.dest = L.marker([destPoint.lat, destPoint.lon], { icon: DefaultIcon }).addTo(map).bindTooltip("Arrivée");
+    if (destPoint) {
+      layersRef.current.dest = L.marker([destPoint.lat, destPoint.lon], { icon: pinIcon("/destination.png", "Arrivée") }).addTo(map).bindTooltip("Arrivée");
     }
 
     // Fit bounds if both points are set
@@ -495,32 +276,91 @@ export default function CommanderTrajetPage() {
         L.latLng(startPoint.lat, startPoint.lon),
         L.latLng(destPoint.lat, destPoint.lon)
       );
-      map.fitBounds(bounds, { padding: [30, 30] });
+      fitTripBounds(bounds);
     }
 
     // After any marker/route change, ensure map reflows
     setTimeout(() => { try { ensureMapVisible(); } catch {} }, 0);
-  }, [startPoint, destPoint]);
+  }, [startPoint, destPoint, mapReady]);
 
-  // Draw straight route between points and compute distance (as fallback when no router service)
+  // Draw real road route (OSRM) between points; straight line as fallback
   useEffect(() => {
     const map = mapRef.current;
     const L = LRef.current;
     if (!map || !L) return;
+    let cancelled = false;
+
     if (layersRef.current.route) {
       layersRef.current.route.remove();
       layersRef.current.route = null;
     }
-    if (startPoint && destPoint) {
-      layersRef.current.route = L.polyline(
-        [
-          [startPoint.lat, startPoint.lon],
-          [destPoint.lat, destPoint.lon],
-        ],
-        { color: "#fb923c", weight: 4 }
-      ).addTo(map);
+    if (layersRef.current.routeLabels) {
+      layersRef.current.routeLabels.forEach((l) => l.remove());
+      layersRef.current.routeLabels = null;
     }
-  }, [startPoint, destPoint]);
+    if (!startPoint || !destPoint) {
+      setRoute(null);
+      return;
+    }
+
+    (async () => {
+      const r = await fetchRoute(startPoint, destPoint);
+      if (cancelled || !r) return;
+      setRoute(r);
+      try {
+        layersRef.current.route = L.polyline(r.coordinates, {
+          color: "#fb923c",
+          weight: 5,
+          opacity: 0.9,
+          lineCap: "round",
+          lineJoin: "round",
+          dashArray: r.fallback ? "6 6" : null,
+        }).addTo(map);
+        fitTripBounds(L.latLngBounds(r.coordinates));
+
+        // Route labels: distance on the line + ETA badge (white border, orange fill)
+        const coords = r.coordinates;
+        if (coords.length >= 2) {
+          const kmLabel = Number.isFinite(r.distanceKm) ? `${r.distanceKm.toFixed(1)} km` : null;
+          const etaLabel = Number.isFinite(r.durationMin) ? `${Math.round(r.durationMin)} min` : null;
+          const labels = [];
+          if (kmLabel) {
+            const at = coords[Math.floor(coords.length * 0.45)];
+            labels.push(
+              L.marker(at, {
+                interactive: false,
+                keyboard: false,
+                icon: L.divIcon({
+                  className: "",
+                  iconSize: [56, 20],
+                  iconAnchor: [28, 10],
+                  html: `<div style="background:rgba(255,255,255,.95);color:#334155;font-weight:700;font-size:11px;line-height:20px;text-align:center;border-radius:6px;box-shadow:0 1px 4px rgba(15,23,42,.25);white-space:nowrap">${kmLabel}</div>`,
+                }),
+              }).addTo(map)
+            );
+          }
+          if (etaLabel) {
+            const at = coords[Math.floor(coords.length * 0.65)];
+            labels.push(
+              L.marker(at, {
+                interactive: false,
+                keyboard: false,
+                icon: L.divIcon({
+                  className: "",
+                  iconSize: [56, 28],
+                  iconAnchor: [28, 14],
+                  html: `<div style="background:#ea580c;color:#fff;font-weight:800;font-size:12px;line-height:22px;text-align:center;border-radius:8px;border:3px solid #fff;box-shadow:0 2px 8px rgba(15,23,42,.3);white-space:nowrap">${etaLabel}</div>`,
+                }),
+              }).addTo(map)
+            );
+          }
+          layersRef.current.routeLabels = labels;
+        }
+      } catch {}
+    })();
+
+    return () => { cancelled = true; };
+  }, [startPoint, destPoint, mapReady]);
 
   async function submitOrder() {
     if (!canOrder || submitting) return;
@@ -567,6 +407,15 @@ export default function CommanderTrajetPage() {
 
       const newId = data?.id || data?._id;
       try { if (newId) localStorage.setItem('tri_last_order_id', String(newId)); } catch {}
+      
+      // Reset all fields after successful order submission
+      setStartText("");
+      setDestText("");
+      setStartPoint(null);
+      setDestPoint(null);
+      setOptions({ promo: "", pax: 1, bags: 0, accessible: false, bagOffer: 0, bagDesc: "" });
+      setSubmitError("");
+      
       if (newId) {
         router.push(`/commande-acceptee?id=${encodeURIComponent(newId)}`);
       } else {
@@ -580,168 +429,134 @@ export default function CommanderTrajetPage() {
   }
 
   return (
-    <div className="min-h-screen bg-white">
-      {/* Top bar */}
-      <div className="sticky top-0 z-10 bg-white/80 backdrop-blur border-b border-amber-100">
-        <div className="max-w-md mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={() => router.back()}
-              aria-label="Retour"
-              className="p-2 rounded-lg text-slate-600 hover:bg-slate-100"
-            >
-              <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor"><path d="M15.75 19.5a.75.75 0 0 1-.53-.22l-6-6a.75.75 0 0 1 0-1.06l6-6a.75.75 0 1 1 1.06 1.06L10.31 12l5.97 5.72a.75.75 0 0 1-.53 1.28Z"/></svg>
-            </button>
-            <div className="flex items-center gap-2">
-              <svg className="w-6 h-6 text-orange-600" viewBox="0 0 24 24" fill="currentColor"><path d="M5 12a7 7 0 0 1 14 0v6a2 2 0 0 1-2 2h-3a1 1 0 0 1-1-1v-3H11v3a1 1 0 0 1-1 1H7a2 2 0 0 1-2-2v-6Z"/></svg>
-              <span className="font-bold text-slate-800">Commander un trajet</span>
-            </div>
-          </div>
+    <div className="relative h-[100dvh] overflow-hidden bg-white">
+      {/* Carte plein écran (isolate: les z-index internes de Leaflet restent sous la sheet) */}
+      <div ref={mapContainerRef} className="absolute inset-0 isolate" />
+
+      {/* Barre flottante : retour + trajet */}
+      <div className="absolute top-0 inset-x-0 z-[500] pointer-events-none">
+        <div className="max-w-md mx-auto px-3 pt-3 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            aria-label="Retour"
+            className="pointer-events-auto w-10 h-10 shrink-0 bg-white rounded-full shadow-md flex items-center justify-center text-slate-600"
+          >
+            <img src="/retour.svg" alt="Retour" className="w-5 h-5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => setModalOpen(true)}
+            className="pointer-events-auto flex-1 min-w-0 bg-white rounded-full shadow-md px-4 py-3 flex items-center gap-2 text-left"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-500 shrink-0" />
+            <span className="truncate text-sm font-medium text-slate-800">{startText || "Départ"}</span>
+            <svg viewBox="0 0 24 24" className="w-4 h-4 text-slate-400 shrink-0" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14m-6-6 6 6-6 6" /></svg>
+            <span className="w-2 h-2 rounded-full bg-orange-500 shrink-0" />
+            <span className="truncate text-sm font-medium text-slate-800">{destText || "Destination"}</span>
+          </button>
         </div>
       </div>
 
-      <div className="max-w-md mx-auto px-4 py-4 space-y-4">
-        {/* Start input */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
-          <label className="text-xs text-slate-500">Point de départ</label>
-          <div className="mt-1 relative">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-              <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5Z"/></svg>
-            </span>
-            <input
-              ref={startInputRef}
-              value={startText}
-              onChange={(e) => { setStartText(e.target.value); setShowStartSuggest(true); }}
-              onFocus={() => { setShowStartSuggest(true); setShowDestSuggest(false); setTimeout(() => { try { ensureMapVisible(); } catch {} }, 0); }}
-              onBlur={() => setTimeout(() => { setShowStartSuggest(false); ensureMapVisible(); }, 140)}
-              onKeyDown={(e) => { if (e.key === "Escape") { setShowStartSuggest(false); e.currentTarget.blur(); } }}
-              className="w-full rounded-xl border border-slate-200 pl-10 pr-28 py-3 outline-none focus:ring-2 focus:ring-orange-400"
-              placeholder="Votre position ou une adresse"
-            />
-            <button type="button" onClick={locateMe} className="absolute right-2 top-1/2 -translate-y-1/2 text-orange-700 text-sm bg-orange-50 hover:bg-orange-100 rounded-lg px-3 py-1">
-              Ma position
-            </button>
-            {showStartSuggest && (
-              <div
-                className="absolute z-10 mt-2 left-0 right-0 bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden"
-                onMouseDown={(e) => e.preventDefault()} // keep input focused while clicking options
-              >
-                {startSuggestions.map((p) => (
-                  <button
-                    key={`${p.name}-${p.lat}-${p.lon}`}
-                    onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setStartPoint(p); setStartText(p.name); setShowStartSuggest(false); setTimeout(ensureMapVisible, 0); }}
-                    onTouchStart={(e) => { /* do not preventDefault in passive listeners */ e.stopPropagation(); setStartPoint(p); setStartText(p.name); setShowStartSuggest(false); setTimeout(ensureMapVisible, 0); }}
-                    className="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center gap-2"
-                  >
-                    <svg viewBox="0 0 24 24" className="w-4 h-4 text-slate-400" fill="currentColor"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5Z"/></svg>
-                    <span className="text-sm text-slate-700">{p.name}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-        </div>
+      {/* Bouton flottant : ma position */}
+      <button
+        type="button"
+        onClick={locateMe}
+        aria-label="Ma position"
+        className="absolute right-4 z-[450] w-11 h-11 bg-white rounded-full shadow-md flex items-center justify-center text-slate-600"
+        style={{ bottom: sheetH ? `${sheetH + 16}px` : "calc(55% + 16px)", transition: sheetDragging ? "none" : "bottom 0.25s ease-out" }}
+      >
+        <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="2" fill="currentColor" stroke="none" /><path d="M12 2v3M12 19v3M2 12h3M19 12h3" /></svg>
+      </button>
 
-        {/* Destination input */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-3">
-          <label className="text-xs text-slate-500">Destination</label>
-          <div className="mt-1 relative">
-            <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400">
-              <svg viewBox="0 0 24 24" className="w-5 h-5" fill="currentColor"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5Z"/></svg>
-            </span>
-            <input
-              ref={destInputRef}
-              value={destText}
-              onChange={(e) => { setDestText(e.target.value); setShowDestSuggest(true); }}
-              onFocus={() => { setShowDestSuggest(true); setShowStartSuggest(false); setTimeout(() => { try { ensureMapVisible(); } catch {} }, 0); }}
-              onBlur={() => setTimeout(() => { setShowDestSuggest(false); ensureMapVisible(); }, 140)}
-              onKeyDown={(e) => { if (e.key === "Escape") { setShowDestSuggest(false); e.currentTarget.blur(); } }}
-              className="w-full rounded-xl border border-slate-200 pl-10 pr-4 py-3 outline-none focus:ring-2 focus:ring-orange-400"
-              placeholder="Où allons-nous ?"
-            />
-            {showDestSuggest && (
-              <div
-                className="absolute z-10 mt-2 left-0 right-0 bg-white rounded-xl border border-slate-200 shadow-lg overflow-hidden"
-                onMouseDown={(e) => e.preventDefault()} // keep input focused while clicking options
-              >
-                {destSuggestions.map((p) => (
-                  <button
-                    key={`${p.name}-${p.lat}-${p.lon}`}
-                    onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); setDestPoint(p); setDestText(p.name); setShowDestSuggest(false); setTimeout(ensureMapVisible, 0); }}
-                    onTouchStart={(e) => { /* do not preventDefault in passive listeners */ e.stopPropagation(); setDestPoint(p); setDestText(p.name); setShowDestSuggest(false); setTimeout(ensureMapVisible, 0); }}
-                    className="w-full text-left px-3 py-2 hover:bg-slate-50 flex items-center gap-2"
-                  >
-                    <svg viewBox="0 0 24 24" className="w-4 h-4 text-slate-400" fill="currentColor"><path d="M12 2a7 7 0 0 0-7 7c0 5.25 7 13 7 13s7-7.75 7-13a7 7 0 0 0-7-7Zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5Z"/></svg>
-                    <span className="text-sm text-slate-700">{p.name}</span>
-                  </button>
-                ))}
+      {/* Bottom sheet */}
+      <RideBottomSheet
+        onHeightChange={onSheetHeight}
+        footer={(
+          <button
+            disabled={!canOrder || submitting}
+            className="w-full bg-orange-600 disabled:opacity-60 hover:bg-orange-700 text-white rounded-xl py-3 font-black tracking-wide text-lg shadow"
+            onClick={submitOrder}
+          >
+            {submitting ? "Envoi..." : "Commander"}
+          </button>
+        )}
+      >
+            {/* En-tête : trajet + prix + stats */}
+            <div className="flex items-start justify-between gap-3 pt-1">
+              <div className="min-w-0">
+                <div className="text-xs text-slate-500 truncate">
+                  {startPoint?.name || "Départ"} → {destPoint?.name || "Destination"}
+                </div>
+                <div className="mt-1 text-3xl font-black text-slate-900">
+                  {isHydrated && price ? `${price} CFA` : "—"}
+                </div>
+                <div className="text-sm text-slate-600 mt-0.5">
+                  {isHydrated && displayKm ? `${displayKm.toFixed(1)} km` : "—"} • {isHydrated && displayMin ? `${displayMin} min` : "—"}
+                </div>
               </div>
-            )}
-          </div>
-        </div>
-
-        {/* Map + route (Leaflet) */}
-        <div className={`bg-white rounded-2xl border border-slate-200 shadow-sm p-3 ${hideBelow ? "hidden" : ""}`}>
-          <div className="text-xs text-slate-500 mb-2">Itinéraire estimé</div>
-          <div className="w-full h-64 rounded-xl overflow-hidden">
-            <div ref={mapContainerRef} className="w-full h-64" />
-          </div>
-          <div className="mt-2 flex items-center justify-between text-sm text-slate-700">
-            <div className="flex items-center gap-2">
-              <svg viewBox="0 0 24 24" className="w-5 h-5 text-slate-500" fill="currentColor"><path d="M12 8a1 1 0 0 1 1 1v3.38l2.24 1.29a1 1 0 1 1-1 1.74l-2.74-1.58A1 1 0 0 1 11 13V9a1 1 0 0 1 1-1Zm0-6a10 10 0 1 0 0 20 10 10 0 0 0 0-20Z"/></svg>
-              <span>{isHydrated && distanceKm ? `${distanceKm.toFixed(1)} km` : "—"}</span>
-              <span>•</span>
-              <span>{isHydrated && durationMin ? `${durationMin} min` : "—"}</span>
+              <button
+                type="button"
+                onClick={() => setModalOpen(true)}
+                aria-label="Modifier le trajet"
+                title="Modifier"
+                className="shrink-0 w-10 h-10 rounded-full bg-slate-100 text-slate-600 hover:bg-slate-200 flex items-center justify-center"
+              >
+                <svg viewBox="0 0 24 24" className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5Z" />
+                </svg>
+              </button>
             </div>
-            <div className="font-semibold text-slate-900">{isHydrated && price ? `${price} CFA` : "—"}</div>
-          </div>
-        </div>
 
-        {/* Options */}
-        <div className={`bg-white rounded-2xl border border-slate-200 shadow-sm p-3 space-y-3 ${hideBelow ? "hidden" : ""}`}>
-          <div className="flex items-center gap-2">
-            <svg viewBox="0 0 24 24" className="w-5 h-5 text-slate-500" fill="currentColor"><path d="M12 3a9 9 0 1 0 9 9A9.01 9.01 0 0 0 12 3Zm1 5a1 1 0 0 1 2 0v2h2a1 1 0 1 1 0 2h-2v2a1 1 0 1 1-2 0v-2h-2a1 1 0 0 1 0-2h2Z"/></svg>
-            <span className="text-sm font-medium text-slate-700">Options</span>
-          </div>
+
+            {/* Options */}
+            <div className="bg-slate-50 rounded-2xl p-3 space-y-3">
+          <div className="text-sm font-medium text-slate-700">Options</div>
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div>
-              <label className="block text-xs text-slate-500 mb-1">Code promo</label>
-              <input
-                value={options.promo}
-                onChange={(e) => setOptions((o) => ({ ...o, promo: e.target.value }))}
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 outline-none focus:ring-2 focus:ring-orange-400"
-                placeholder="TRI2025"
-              />
-            </div>
-            <div>
               <label className="block text-xs text-slate-500 mb-1">Passagers</label>
-              <input
-                type="number"
-                min={1}
-                max={6}
-                step={1}
-                value={paxInput}
-                onChange={(e) => setPaxInput(e.target.value)}
-                onBlur={validatePax}
-                onKeyDown={(e) => { if (e.key === 'Enter') { e.currentTarget.blur(); validatePax(); } }}
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 outline-none focus:ring-2 focus:ring-orange-400"
-              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOptions((o) => ({ ...o, pax: Math.max(1, (Number(o.pax) || 1) - 1) }))}
+                  disabled={pax <= 1}
+                  aria-label="Moins de passagers"
+                  className="w-8 h-8 rounded-full border border-slate-200 text-slate-600 disabled:opacity-40 flex items-center justify-center text-lg leading-none"
+                >−</button>
+                <span className="min-w-6 text-center font-semibold text-slate-800">{pax}</span>
+                <button
+                  type="button"
+                  onClick={() => setOptions((o) => ({ ...o, pax: Math.min(6, (Number(o.pax) || 1) + 1) }))}
+                  disabled={pax >= 6}
+                  aria-label="Plus de passagers"
+                  className="w-8 h-8 rounded-full border border-slate-200 text-slate-600 disabled:opacity-40 flex items-center justify-center text-lg leading-none"
+                >+</button>
+              </div>
             </div>
             <div>
               <label className="block text-xs text-slate-500 mb-1">Bagages</label>
-              <input
-                type="number"
-                min={0}
-                max={3}
-                value={options.bags}
-                onChange={(e) => {
-                  const bags = Number(e.target.value);
-                  setOptions((o) => ({ ...o, bags, bagOffer: bags > 0 ? o.bagOffer : 0, bagDesc: bags > 0 ? o.bagDesc : "" }));
-                  setShowBagDetails(bags > 0);
-                }}
-                className="w-full rounded-xl border border-slate-200 px-3 py-2 outline-none focus:ring-2 focus:ring-orange-400"
-              />
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setOptions((o) => ({ ...o, bags: Math.max(0, (Number(o.bags) || 0) - 1) }))}
+                  disabled={!options.bags}
+                  aria-label="Moins de bagages"
+                  className="w-8 h-8 rounded-full border border-slate-200 text-slate-600 disabled:opacity-40 flex items-center justify-center text-lg leading-none"
+                >−</button>
+                <span className="min-w-6 text-center font-semibold text-slate-800">{options.bags || 0}</span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    const n = Math.min(3, (Number(options.bags) || 0) + 1);
+                    setOptions((o) => ({ ...o, bags: n }));
+                    if (n > 0) setShowBagDetails(true);
+                  }}
+                  disabled={(Number(options.bags) || 0) >= 3}
+                  aria-label="Plus de bagages"
+                  className="w-8 h-8 rounded-full border border-slate-200 text-slate-600 disabled:opacity-40 flex items-center justify-center text-lg leading-none"
+                >+</button>
+              </div>
             </div>
             {Number(options.bags) > 0 && !showBagDetails && (
               <div className="col-span-2">
@@ -777,75 +592,22 @@ export default function CommanderTrajetPage() {
                 </div>
               </>
             )}
-            <label className="flex items-center gap-2 mt-5">
-              <input type="checkbox" checked={options.accessible} onChange={(e) => setOptions((o) => ({ ...o, accessible: e.target.checked }))} />
-              <span>Accessibilité</span>
-            </label>
           </div>
         </div>
 
-        {/* Order button */}
-        <div className={hideBelow ? "hidden" : ""}>
-          <button
-            disabled={!canOrder || submitting}
-            className="w-full bg-orange-600 disabled:opacity-60 hover:bg-orange-700 text-white rounded-[999px] py-3 font-semibold shadow"
-            onClick={submitOrder}
-          >
-            {submitting ? "Envoi..." : isHydrated && price ? `Commander • Total ~${price} CFA` : "Commander"}
-          </button>
-          {submitError && (
-            <div className="text-sm text-red-600 mt-2">{submitError}</div>
-          )}
-        </div>
-      </div>
+            {submitError && (
+              <div className="text-sm text-red-600">{submitError}</div>
+            )}
+      </RideBottomSheet>
 
-      <div className="h-8" />
+      {/* Modale plein écran de recherche de trajet */}
+      <TrajetSearchModal
+        open={modalOpen}
+        onClose={() => setModalOpen(false)}
+        onDone={() => setModalOpen(false)}
+        trip={{ startText, startPoint, destText, destPoint }}
+        onChange={applyTrip}
+      />
     </div>
-  );
-}
-
-function SvgMiniMap({ start, dest }) {
-  const w = 600; // internal viewBox width
-  const h = 260; // internal viewBox height
-
-  let startPt = null;
-  let destPt = null;
-  if (start) startPt = projectToViewBox(start, w, h);
-  if (dest) destPt = projectToViewBox(dest, w, h);
-
-  return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="w-full h-full" xmlns="http://www.w3.org/2000/svg">
-      {/* background grid */}
-      <defs>
-        <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
-          <path d="M 24 0 L 0 0 0 24" fill="none" stroke="#e5e7eb" strokeWidth="1" />
-        </pattern>
-      </defs>
-      <rect width="100%" height="100%" fill="#f1f5f9" />
-      <rect width="100%" height="100%" fill="url(#grid)" />
-
-      {/* route line */}
-      {startPt && destPt && (
-        <g>
-          <path d={`M ${startPt.x} ${startPt.y} L ${destPt.x} ${destPt.y}`} stroke="#fb923c" strokeWidth="4" strokeLinecap="round" fill="none" />
-        </g>
-      )}
-
-      {/* start pin */}
-      {startPt && (
-        <g transform={`translate(${startPt.x}, ${startPt.y})`}>
-          <circle r="6" fill="#22c55e" />
-          <circle r="2" fill="white" />
-        </g>
-      )}
-
-      {/* dest pin */}
-      {destPt && (
-        <g transform={`translate(${destPt.x}, ${destPt.y})`}>
-          <circle r="6" fill="#ef4444" />
-          <circle r="2" fill="white" />
-        </g>
-      )}
-    </svg>
   );
 }

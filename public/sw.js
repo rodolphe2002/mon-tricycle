@@ -24,8 +24,14 @@ self.addEventListener('activate', (event) => {
 
 self.addEventListener('fetch', (event) => {
   const req = event.request;
-  // Prefer network, fall back to cache
+  // Only handle same-origin GET requests; let cross-origin API calls
+  // (Overpass, OSM tiles, backend, CDN) go straight to the network.
+  if (req.method !== 'GET' || !req.url.startsWith(self.location.origin)) return;
+  // Prefer network, fall back to cache; always resolve to a real Response.
   event.respondWith(
-    fetch(req).catch(() => caches.match(req))
+    fetch(req).catch(async () => {
+      const cached = await caches.match(req);
+      return cached || Response.error();
+    })
   );
 });
